@@ -83,6 +83,7 @@ def solver_check(variant: str, seed: int, out_dir: Path) -> None:
     select_variant(variant)
     from sionna_twin_ops import checks
     from sionna_twin_ops.figures import tilt_check_figure
+    from sionna_twin_ops.provenance import provenance
     from sionna_twin_ops.solve import DEV_SAMPLES, specular_settings
 
     settings = specular_settings(DEV_SAMPLES, seed)
@@ -90,11 +91,16 @@ def solver_check(variant: str, seed: int, out_dir: Path) -> None:
     tilt_rows = checks.tilt_check(settings, lobe_samples)
     surface = checks.surface_check(settings, tilt_deg=6.0)
     floor_rows = checks.sampling_floor(seed)
-    header = (
-        f"Synthetic terrain and a flat test tile, not a real place. Propagation: Sionna RT "
-        f"{version('sionna-rt')} (Mitsuba {version('mitsuba')}, variant {variant}); pattern: "
-        "3GPP TR 38.901. Line of sight and specular reflection only. Written by "
-        "`twin solver-check`."
+    header = "\n".join(
+        [
+            "Synthetic terrain and a flat test tile, not a real place. Propagation: Sionna RT; "
+            "pattern: 3GPP TR 38.901. Line of sight and specular reflection only. Written by "
+            "`twin solver-check`.",
+            "",
+            "| provenance | |",
+            "|---|---|",
+            *(f"| {key} | {value} |" for key, value in provenance().items()),
+        ]
     )
     report = checks.solver_check_markdown(
         tilt_rows, surface, floor_rows, settings, lobe_samples, header
@@ -143,6 +149,21 @@ def main(argv: list[str] | None = None) -> int:
     solver.add_argument(
         "--out-dir", type=Path, required=True, help="writes solver_check.md and figures/"
     )
+    maps = commands.add_parser(
+        "backend-maps", help="solve the floor maps on one backend and save them for comparison"
+    )
+    maps.add_argument(
+        "--variant", default=DEFAULT_VARIANT, help=f"Mitsuba variant (default {DEFAULT_VARIANT})"
+    )
+    maps.add_argument("--samples", required=True, help="comma-separated rays per map, e.g. 1e7,1e8")
+    maps.add_argument("--seed", type=int, required=True, help="solver seed")
+    maps.add_argument("--out", type=Path, required=True, help="directory for maps and meta.json")
+    compare = commands.add_parser(
+        "backend-check", help="compare two backend-maps runs cell by cell"
+    )
+    compare.add_argument("--reference", type=Path, required=True, help="reference run directory")
+    compare.add_argument("--candidate", type=Path, required=True, help="candidate run directory")
+    compare.add_argument("--out", type=Path, required=True, help="markdown file to write")
     args = parser.parse_args(argv)
 
     if args.command == "env":
@@ -167,6 +188,22 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "solver-check":
         solver_check(args.variant, args.seed, args.out_dir)
+        return 0
+    if args.command == "backend-maps":
+        from sionna_twin_ops.backend import select_variant
+
+        select_variant(args.variant)
+        from sionna_twin_ops.crosscheck import floor_maps
+
+        floor_maps([int(float(n)) for n in args.samples.split(",")], args.seed, args.out)
+        return 0
+    if args.command == "backend-check":
+        from sionna_twin_ops.crosscheck import compare_markdown
+
+        report = compare_markdown(args.reference, args.candidate)
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(report)
+        sys.stdout.write(report)
         return 0
     raise AssertionError(f"unhandled command {args.command!r}")
 
