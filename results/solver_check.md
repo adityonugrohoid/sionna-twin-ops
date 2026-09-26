@@ -4,7 +4,7 @@ Synthetic terrain and a flat test tile, not a real place. Propagation: Sionna RT
 
 | provenance | |
 |---|---|
-| commit | 34713e4cba614eb5e4c5f775eefc78b48c87b1ae |
+| commit | c4246c0ecc992e0ce33e6f5f066e59d69ff8f8d5 |
 | variant | cuda_ad_mono_polarized |
 | platform | Windows-11-10.0.26200-SP0 |
 | python | 3.13.12 |
@@ -52,20 +52,20 @@ Flat tile. The mesh surface at 1.5 m against a planar radio map at 1.5 m, same c
 | comparison | median abs | p95 abs | bias | cells |
 |---|---|---|---|---|
 | mesh surface vs planar map | 2.2e-07 | 1.3e-06 | +4.3e-06 | 100.0% |
-| planar map, seed vs seed + 1 | 0.0e+00 | 5.1e-07 | +4.7e-09 | 100.0% |
-| mesh surface, seed vs seed + 1 | 0.0e+00 | 3.4e-07 | +3.0e-10 | 100.0% |
+| planar map, seed vs seed + 1 | 0.0e+00 | 5.1e-07 | -1.1e-09 | 100.0% |
+| mesh surface, seed vs seed + 1 | 0.0e+00 | 3.2e-07 | +3.4e-10 | 100.0% |
 
 ## Time per map and the sampling floor (N3)
 
 Terrains 3, 1, 5, azimuth 90, tilt 6, the ruled settings (line of sight and specular reflection, max_depth 3), compared over cells with power in both, overall and split by the LOS mask (see `baselines.py`).
 
-The floor compares the dataset's 1e+09 rays with 4e+09. A larger reference is not possible: Mitsuba's sampler wavefront is 32-bit, so one solve launches at most 4294967295 rays, and repeating solves adds nothing because the rays come from the same deterministic lattice each time (the seed does not change these maps). A 4x step understates the error against the fully converged map more than the earlier 10x step (1e+08 vs 1e+09) did; that step is listed after the main table as context.
+The floor compares the dataset's 1e+09 rays with 4e+09. A larger reference is not possible: Mitsuba's sampler wavefront is 32-bit, so one solve launches at most 4294967295 rays, and repeating solves adds nothing because the rays come from the same deterministic lattice each time (the seed does not change these maps). A 4x step understates the error against the fully converged map more than the earlier 10x step (1e+08 vs 1e+09) did; that step is listed after the main table as context. A lattice with a different ray count points its rays in different directions rather than adding to the old ones, so a grazing cell reached by a single ray at one count can be missed at another: that is why a cell or two can have power at the smaller count only.
 
 | terrain | site | s/map 1e+07 | s/map 1e+08 | s/map 1e+09 | s/map 4e+09 | floor median / p95 | LOS median / p95 (cells) | NLOS median / p95 (cells) | no-hit 1e+09 | no-hit 4e+09 | hit only at 4e+09 | hit only at 1e+09 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 3 | hilltop | 0.01 | 0.11 | 1.03 | 4.08 | 0.005 / 0.091 | 0.004 / 0.059 (5609) | 0.016 / 0.587 (921) | 60.14% | 60.10% | 7 | 1 |
-| 1 | slope | 0.01 | 0.10 | 1.01 | 4.05 | 0.005 / 0.114 | 0.004 / 0.066 (2236) | 0.012 / 0.396 (645) | 82.41% | 82.39% | 4 | 1 |
-| 5 | valley | 0.01 | 0.09 | 0.86 | 3.44 | 0.006 / 0.138 | 0.005 / 0.083 (6112) | 0.019 / 0.825 (1015) | 56.50% | 56.46% | 7 | 0 |
+| 3 | hilltop | 0.01 | 0.10 | 1.02 | 4.07 | 0.005 / 0.091 | 0.004 / 0.059 (5609) | 0.016 / 0.587 (921) | 60.14% | 60.10% | 7 | 1 |
+| 1 | slope | 0.01 | 0.10 | 1.00 | 4.04 | 0.005 / 0.114 | 0.004 / 0.066 (2236) | 0.012 / 0.396 (645) | 82.41% | 82.39% | 4 | 1 |
+| 5 | valley | 0.01 | 0.08 | 0.85 | 3.41 | 0.006 / 0.138 | 0.005 / 0.083 (6112) | 0.019 / 0.825 (1015) | 56.50% | 56.46% | 7 | 0 |
 
 Context, 1e+08 against 1e+09:
 
