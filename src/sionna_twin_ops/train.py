@@ -302,5 +302,30 @@ def training_summary_markdown(runs: list[Path]) -> str:
         "",
         f"Across seeds: L1 {spread('l1_db')} dB; power accuracy {spread('power_accuracy')}; "
         f"BCE {spread('bce')}.",
+        "",
+        overfitting_note(metas),
     ]
     return "\n".join(lines) + "\n"
+
+
+def overfitting_note(metas: list[dict[str, Any]]) -> str:
+    """One sentence on where the seeds peak and what happens after, from their histories.
+
+    Args:
+        metas: Run records, the first of which supplies the example numbers.
+
+    Returns:
+        The sentence.
+    """
+    epochs = [meta["best"]["epoch"] for meta in metas]
+    first = metas[0]
+    history = first["history"]
+    best = first["best"]["epoch"]
+    at_best, last = history[best - 1], history[-1]
+    return (
+        f"All {len(metas)} seeds peak at epochs {min(epochs)}-{max(epochs)} and overfit after: "
+        f"for seed {first['hyperparameters']['seed']}, validation L1 goes from "
+        f"{at_best['l1_db']:.3f} dB at epoch {best} to {last['l1_db']:.3f} dB at epoch "
+        f"{last['epoch']}, while the training loss falls from {at_best['train_total']:.3f} to "
+        f"{last['train_total']:.3f}. The saved weights are those of the best epoch."
+    )
