@@ -11,9 +11,7 @@ recomputed from the transformed terrain and azimuth.
 """
 
 import numpy as np
-import torch
 from numpy.typing import NDArray
-from torch import Tensor
 
 from sionna_twin_ops.site import MAP_SIZE_M, Site
 from sionna_twin_ops.terrain import Terrain, TerrainParams
@@ -72,33 +70,6 @@ def transform_inputs(inputs: NDArray[np.float32], k: int, mirror: bool) -> NDArr
     if mirror:
         out[SIN_CHANNEL] = -out[SIN_CHANNEL]
     return out
-
-
-def transform_batch(
-    inputs: Tensor, rasters: list[Tensor], k: int, mirror: bool
-) -> tuple[Tensor, list[Tensor]]:
-    """The same variant on a training batch on any device.
-
-    Args:
-        inputs: (batch, channels, rows, columns).
-        rasters: Other (batch, rows, columns) tensors, such as the targets.
-        k: Clockwise quarter turns.
-        mirror: Mirror east-west first.
-
-    Returns:
-        (transformed inputs, transformed rasters).
-    """
-
-    def apply(t: Tensor) -> Tensor:
-        if mirror:
-            t = torch.flip(t, dims=(-1,))
-        return torch.rot90(t, k=k, dims=(-2, -1))
-
-    x = apply(inputs)
-    if mirror:
-        x = x.clone()
-        x[:, SIN_CHANNEL] = -x[:, SIN_CHANNEL]
-    return x, [apply(r) for r in rasters]
 
 
 def centred_crop(terrain: Terrain, site: Site) -> tuple[Terrain, Site]:

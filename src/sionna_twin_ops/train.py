@@ -18,7 +18,7 @@ import numpy as np
 import torch
 from torch import Tensor, nn
 
-from sionna_twin_ops.augment import VARIANTS, transform_batch
+from sionna_twin_ops.augment import SIN_CHANNEL, VARIANTS
 from sionna_twin_ops.dataset import read_manifest
 from sionna_twin_ops.features import map_inputs, targets, terrain_features
 from sionna_twin_ops.model import RESIDUAL_SCALE_DB, UNet, parameter_count
@@ -146,6 +146,33 @@ def evaluate(model: nn.Module, data: SplitData, device: torch.device) -> dict[st
         "total": l1 / RESIDUAL_SCALE_DB + POWER_LOSS_WEIGHT * bce,
         "power_accuracy": correct / cells,
     }
+
+
+def transform_batch(
+    inputs: Tensor, rasters: list[Tensor], k: int, mirror: bool
+) -> tuple[Tensor, list[Tensor]]:
+    """The same variant on a training batch on any device.
+
+    Args:
+        inputs: (batch, channels, rows, columns).
+        rasters: Other (batch, rows, columns) tensors, such as the targets.
+        k: Clockwise quarter turns.
+        mirror: Mirror east-west first.
+
+    Returns:
+        (transformed inputs, transformed rasters).
+    """
+
+    def apply(t: Tensor) -> Tensor:
+        if mirror:
+            t = torch.flip(t, dims=(-1,))
+        return torch.rot90(t, k=k, dims=(-2, -1))
+
+    x = apply(inputs)
+    if mirror:
+        x = x.clone()
+        x[:, SIN_CHANNEL] = -x[:, SIN_CHANNEL]
+    return x, [apply(r) for r in rasters]
 
 
 def augment_batch(

@@ -8,7 +8,6 @@ from sionna_twin_ops.augment import (
     VARIANTS,
     centred_crop,
     transform_azimuth,
-    transform_batch,
     transform_inputs,
     transform_raster,
     transform_terrain,
@@ -17,6 +16,7 @@ from sionna_twin_ops.dataset import select_terrains
 from sionna_twin_ops.features import map_inputs, terrain_features
 from sionna_twin_ops.site import Site
 from sionna_twin_ops.terrain import Terrain, generate_terrain
+from sionna_twin_ops.train import transform_batch
 
 AZIMUTH = 45.0
 TILT = 6.0
