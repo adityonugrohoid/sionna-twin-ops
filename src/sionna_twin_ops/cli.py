@@ -172,6 +172,18 @@ def main(argv: list[str] | None = None) -> int:
     summary_cmd = commands.add_parser("dataset-summary", help="write the committed dataset summary")
     summary_cmd.add_argument("--dataset", type=Path, required=True, help="dataset directory")
     summary_cmd.add_argument("--out", type=Path, required=True, help="markdown file to write")
+    train_cmd = commands.add_parser("train", help="train one seed of the surrogate")
+    train_cmd.add_argument("--dataset", type=Path, required=True, help="dataset directory")
+    train_cmd.add_argument("--seed", type=int, required=True, help="training seed")
+    train_cmd.add_argument("--epochs", type=int, required=True, help="training epochs")
+    train_cmd.add_argument("--width", type=int, required=True, help="U-Net first-level width")
+    train_cmd.add_argument(
+        "--device", choices=("cuda", "cpu"), required=True, help="explicit device, no fallback"
+    )
+    train_cmd.add_argument("--out", type=Path, required=True, help="run directory")
+    runs_cmd = commands.add_parser("training-summary", help="summarise training runs")
+    runs_cmd.add_argument("--runs", type=Path, nargs="+", required=True, help="run directories")
+    runs_cmd.add_argument("--out", type=Path, required=True, help="markdown file to write")
     args = parser.parse_args(argv)
 
     if args.command == "env":
@@ -233,6 +245,19 @@ def main(argv: list[str] | None = None) -> int:
         from sionna_twin_ops.dataset import summary_markdown
 
         report = summary_markdown(args.dataset)
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(report, newline="\n")
+        sys.stdout.write(report)
+        return 0
+    if args.command == "train":
+        from sionna_twin_ops.train import train
+
+        train(args.dataset, args.seed, args.epochs, args.width, args.device, args.out)
+        return 0
+    if args.command == "training-summary":
+        from sionna_twin_ops.train import training_summary_markdown
+
+        report = training_summary_markdown(args.runs)
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(report, newline="\n")
         sys.stdout.write(report)
