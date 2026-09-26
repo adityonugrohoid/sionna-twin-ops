@@ -106,7 +106,7 @@ def solver_check(variant: str, seed: int, out_dir: Path) -> None:
         tilt_rows, surface, floor_rows, settings, lobe_samples, header
     )
     (out_dir / "figures").mkdir(parents=True, exist_ok=True)
-    (out_dir / "solver_check.md").write_text(report)
+    (out_dir / "solver_check.md").write_text(report, newline="\n")
     tilt_check_figure(
         [r.tilt_deg for r in tilt_rows],
         [r.lobe_elevation_deg for r in tilt_rows],
@@ -183,7 +183,7 @@ def main(argv: list[str] | None = None) -> int:
         ids = range(args.count)
         report = site_check_markdown(site_check(ids, args.spacing), ids, args.spacing)
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(report)
+        args.out.write_text(report, newline="\n")
         sys.stdout.write(report)
         return 0
     if args.command == "solver-check":
@@ -202,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
 
         report = compare_markdown(args.reference, args.candidate)
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(report)
+        args.out.write_text(report, newline="\n")
         sys.stdout.write(report)
         return 0
     raise AssertionError(f"unhandled command {args.command!r}")

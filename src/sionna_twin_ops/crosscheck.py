@@ -76,7 +76,7 @@ def floor_maps(samples: list[int], seed: int, out: Path) -> dict[str, Any]:
         "tilt_deg": TILT_DEG,
         "rows": rows,
     }
-    (out / META).write_text(json.dumps(meta, indent=1))
+    (out / META).write_text(json.dumps(meta, indent=1), newline="\n")
     return meta
 
 
