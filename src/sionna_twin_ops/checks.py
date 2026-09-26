@@ -535,7 +535,10 @@ def solver_check_markdown(
         "lattice each time (the seed does not change these maps). A 4x step understates "
         "the error against the fully converged map more than the earlier 10x step "
         f"({CONTEXT_SAMPLES:.0e} vs {DATASET_SAMPLES:.0e}) did; that step is listed after "
-        "the main table as context.",
+        "the main table as context. A lattice with a different ray count points its rays in "
+        "different directions rather than adding to the old ones, so a grazing cell reached "
+        "by a single ray at one count can be missed at another: that is why a cell or two "
+        "can have power at the smaller count only.",
         "",
         "| terrain | site | "
         + " | ".join(f"s/map {n:.0e}" for n in FLOOR_SAMPLES)
