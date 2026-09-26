@@ -10,6 +10,9 @@
 # The commit must exist in this repository; uncommitted changes never reach Windows.
 # The snapshot is `git archive` of that commit, written once to <root>\code\<12-char sha>
 # and never modified. Paths in the twin arguments are Windows paths. See docs/windows-gpu.md.
+#
+# Exit codes: 2 = bad usage; 1 = no runner at the root, or a snapshot that is not this
+# commit; otherwise the exit code of the twin command on Windows.
 set -euo pipefail
 
 usage() {

@@ -34,10 +34,13 @@ $fullSha = (Get-Content $marker -Raw).Trim()
 if (-not $fullSha.StartsWith($Commit)) { throw "snapshot marker $fullSha does not match $Commit" }
 
 $venv = Join-Path $Root "venvs\$Commit"
+$ready = Join-Path $venv '.twin-ready'
+if ((Test-Path $venv) -and -not (Test-Path $ready)) {
+    throw "venv $venv exists but was not finished; remove it and run again"
+}
 if (-not (Test-Path $venv)) {
-    $building = "$venv.building"
-    if (Test-Path $building) { throw "an earlier venv build did not finish: remove $building" }
-    & $UvExe venv --python $PythonVersion $building
+    # Built in place (uv's launchers record absolute paths), then marked ready.
+    & $UvExe venv --python $PythonVersion $venv
     if ($LASTEXITCODE -ne 0) { throw "uv venv failed ($LASTEXITCODE)" }
     $all = & $UvExe export --locked --no-dev --no-hashes --no-emit-project --project $code
     if ($LASTEXITCODE -ne 0) { throw "uv export failed ($LASTEXITCODE)" }
@@ -46,17 +49,19 @@ if (-not (Test-Path $venv)) {
     Write-Host ("left out of the Windows venv: " + (($dropped | ForEach-Object { ($_ -split '[ =;]')[0] }) -join ', '))
     $reqs = Join-Path $Root "venvs\$Commit.requirements.txt"
     $kept | Set-Content -Encoding ascii $reqs
-    & $UvExe pip install --python (Join-Path $building 'Scripts\python.exe') -r $reqs
+    $python = Join-Path $venv 'Scripts\python.exe'
+    & $UvExe pip install --python $python -r $reqs
     if ($LASTEXITCODE -ne 0) { throw "uv pip install failed ($LASTEXITCODE)" }
-    & $UvExe pip install --python (Join-Path $building 'Scripts\python.exe') --no-deps -e $code
+    & $UvExe pip install --python $python --no-deps -e $code
     if ($LASTEXITCODE -ne 0) { throw "project install failed ($LASTEXITCODE)" }
-    Rename-Item $building (Split-Path $venv -Leaf)
+    Set-Content -Path $ready -Value $fullSha -Encoding ascii
 }
 
 $json = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($TwinArgsBase64))
-$TwinArgs = @(ConvertFrom-Json $json)
+# Windows PowerShell 5.1 emits a JSON array as one object; the cast unrolls it.
+$TwinArgs = [string[]](ConvertFrom-Json $json)
 Write-Host ("twin " + ($TwinArgs -join ' '))
 
 $env:TWIN_COMMIT = $fullSha
-& (Join-Path $venv 'Scripts\twin.exe') @TwinArgs
+& (Join-Path $venv 'Scripts\python.exe') -m sionna_twin_ops.cli @TwinArgs
 exit $LASTEXITCODE
