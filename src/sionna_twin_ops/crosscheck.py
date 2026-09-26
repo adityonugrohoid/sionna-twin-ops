@@ -184,3 +184,74 @@ def compare_markdown(reference: Path, candidate: Path) -> str:
             f"{c['repeat_identical']} | {c['gpu_memory_mib']} |"
         )
     return "\n".join(lines) + "\n"
+
+
+def symmetry_check_markdown(terrain_id: int, azimuth_deg: float, tilt_deg: float) -> str:
+    """Trace a site-centred crop and its 8 symmetric variants; compare with the moved map.
+
+    Must run after `backend.select_variant`. Each variant's traced map is compared with the
+    original traced map moved by the same variant, cell by cell in dB over cells with power
+    in both, split by the LOS mask of the variant. Ray lattices are not rotation symmetric,
+    so agreement is expected within the sampling floor, not exactly.
+
+    Args:
+        terrain_id: Terrain id (its own site class).
+        azimuth_deg: Boresight azimuth of the original map.
+        tilt_deg: Electrical tilt.
+
+    Returns:
+        Markdown text.
+    """
+    from sionna_twin_ops.antenna import tilt_weights
+    from sionna_twin_ops.augment import (
+        VARIANTS,
+        centred_crop,
+        transform_azimuth,
+        transform_raster,
+        transform_terrain,
+    )
+    from sionna_twin_ops.provenance import provenance
+    from sionna_twin_ops.scene import build_scene, measurement_surface
+    from sionna_twin_ops.solve import DATASET_SAMPLES, solve_map, specular_settings
+
+    settings = specular_settings(DATASET_SAMPLES, 1)
+    weights = tilt_weights(tilt_deg)
+    terrain = generate_terrain(terrain_id, GRID_SPACING_M)
+    crop, site = centred_crop(terrain, place_site(terrain, site_class_for(terrain_id)))
+
+    def trace(k: int, mirror: bool) -> NDArray[np.float64]:
+        moved = transform_terrain(crop, k, mirror)
+        azimuth = transform_azimuth(azimuth_deg, k, mirror)
+        scene = build_scene(moved, site, azimuth)
+        return solve_map(scene, measurement_surface(moved, site), weights, settings).path_gain
+
+    original = trace(0, False)
+    lines = [
+        "# Symmetry check",
+        "",
+        f"Synthetic terrain id {terrain_id}, a {2 * 3480:.0f} m square centred on its "
+        f"{site.site_class} site; azimuth {azimuth_deg:.0f}, tilt {tilt_deg:.0f}; line of sight "
+        f"and specular reflection, {DATASET_SAMPLES:.0e} rays. Each variant (k clockwise "
+        "quarter turns after an optional east-west mirror) moves the terrain and the "
+        "azimuth together and is traced afresh; its map is compared with the original map "
+        "moved the same way. Written by `twin symmetry-check`.",
+        "",
+        "| provenance | |",
+        "|---|---|",
+        *(f"| {k} | {v} |" for k, v in provenance().items()),
+        "",
+        "| k | mirror | azimuth | LOS median | LOS p95 | LOS max | LOS cells | NLOS median | "
+        "NLOS p95 | NLOS max | NLOS cells | power only in moved original | power only in traced |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for k, mirror in VARIANTS:
+        expected = transform_raster(original, k, mirror)
+        traced = original if (k, mirror) == (0, False) else trace(k, mirror)
+        los = los_mask(map_geometry(transform_terrain(crop, k, mirror), site))
+        lines.append(
+            f"| {k} | {mirror} | {transform_azimuth(azimuth_deg, k, mirror):.0f} | "
+            f"{_stats(expected, traced, los)} | {_stats(expected, traced, ~los)} | "
+            f"{int(((expected > 0) & (traced == 0)).sum())} | "
+            f"{int(((expected == 0) & (traced > 0)).sum())} |"
+        )
+    return "\n".join(lines) + "\n"

@@ -10,6 +10,7 @@ import torch
 from sionna_twin_ops.dataset import MANIFEST, map_name, select_terrains
 from sionna_twin_ops.features import INPUT_CHANNELS, map_inputs, targets, terrain_features
 from sionna_twin_ops.model import UNet, parameter_count
+from sionna_twin_ops.terrain import generate_terrain
 from sionna_twin_ops.train import losses, train, training_summary_markdown
 
 
@@ -38,7 +39,8 @@ def test_path_gain_loss_ignores_cells_without_power() -> None:
 
 def test_inputs_have_every_channel_and_finite_values() -> None:
     entry = select_terrains(20).terrains[0]
-    x, b0 = map_inputs(terrain_features(entry.terrain_id, entry.site), 90.0, 6.0)
+    terrain = generate_terrain(entry.terrain_id, 40.0)
+    x, b0 = map_inputs(terrain_features(terrain, entry.site), 90.0, 6.0)
     assert x.shape == (INPUT_CHANNELS, 128, 128)
     assert np.isfinite(x).all()
     assert np.isfinite(b0).all()
@@ -74,10 +76,12 @@ def fake_dataset(path: Path) -> None:
 
 def test_training_writes_weights_and_a_record(tmp_path: Path) -> None:
     fake_dataset(tmp_path / "data")
-    record = train(tmp_path / "data", 0, 2, 8, "cpu", tmp_path / "run")
+    record = train(tmp_path / "data", 0, 2, 8, "symmetry", "cpu", tmp_path / "run")
     assert (tmp_path / "run" / "model.pt").exists()
     assert record["maps"] == {"train": 2, "validation": 2}
     assert record["best"]["epoch"] in (1, 2)
     assert len(record["history"]) == 2
     report = training_summary_markdown([tmp_path / "run"])
     assert "| 0 | " in report
+    assert record["hyperparameters"]["augmentation"] == "symmetry"
+    assert "l1_nlos_db" in record["best"]
