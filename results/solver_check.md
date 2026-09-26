@@ -39,16 +39,16 @@ Flat tile. The mesh surface at 1.5 m against a planar radio map at 1.5 m, same c
 
 | comparison | median abs | p95 abs | bias | cells |
 |---|---|---|---|---|
-| mesh surface vs planar map | 1.9e-07 | 6.5e-07 | +4.2e-06 | 100.0% |
-| planar map, seed vs seed + 1 | 0.0e+00 | 0.0e+00 | -1.1e-09 | 100.0% |
-| mesh surface, seed vs seed + 1 | 0.0e+00 | 0.0e+00 | +5.8e-10 | 100.0% |
+| mesh surface vs planar map | 1.9e-07 | 6.4e-07 | +4.2e-06 | 100.0% |
+| planar map, seed vs seed + 1 | 0.0e+00 | 0.0e+00 | -4.1e-10 | 100.0% |
+| mesh surface, seed vs seed + 1 | 0.0e+00 | 0.0e+00 | -5.9e-10 | 100.0% |
 
 ## Time per map and the sampling floor (N3)
 
-Terrains 3, 1, 5, azimuth 90, tilt 6, the ruled settings (line of sight and specular reflection, max_depth 3). The floor compares 1e8 with 1e9 samples over cells with power in both. Rays are launched on a fixed lattice, so the seed does not change these maps; the sample count does.
+Terrains 3, 1, 5, azimuth 90, tilt 6, the ruled settings (line of sight and specular reflection, max_depth 3). The floor compares 1e8 with 1e9 samples over cells with power in both, overall and split by the LOS mask (see `baselines.py`). Rays are launched on a fixed lattice, so the seed does not change these maps; the sample count does.
 
-| terrain | site | s/map 1e7 | s/map 1e8 | s/map 1e9 | floor median | floor p95 | no-hit 1e8 | no-hit 1e9 | hit only at 1e9 | hit only at 1e8 |
-|---|---|---|---|---|---|---|---|---|---|---|
-| 3 | hilltop | 0.3 | 2.7 | 27.9 | 0.023 | 0.484 | 60.28% | 60.14% | 23 | 0 |
-| 1 | slope | 0.3 | 3.2 | 32.1 | 0.021 | 0.448 | 82.52% | 82.41% | 18 | 0 |
-| 5 | valley | 0.3 | 2.7 | 27.3 | 0.035 | 0.581 | 56.78% | 56.50% | 46 | 0 |
+| terrain | site | s/map 1e7 | s/map 1e8 | s/map 1e9 | floor median / p95 | LOS median / p95 (cells) | NLOS median / p95 (cells) | no-hit 1e8 | no-hit 1e9 | hit only at 1e9 | hit only at 1e8 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 3 | hilltop | 0.3 | 2.7 | 27.3 | 0.023 / 0.484 | 0.019 / 0.314 (5608) | 0.094 / 1.874 (900) | 60.28% | 60.14% | 23 | 0 |
+| 1 | slope | 0.3 | 3.2 | 31.4 | 0.021 / 0.448 | 0.016 / 0.236 (2236) | 0.061 / 1.477 (628) | 82.52% | 82.41% | 18 | 0 |
+| 5 | valley | 0.3 | 2.7 | 27.3 | 0.035 / 0.581 | 0.030 / 0.391 (6111) | 0.109 / 1.721 (970) | 56.78% | 56.50% | 46 | 0 |

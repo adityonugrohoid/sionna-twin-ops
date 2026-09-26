@@ -28,6 +28,7 @@ SLOPE_MIN_GRADIENT = 0.05  # ASSUMPTION (spec S2): m per m over the 200 m baseli
 MAP_CELLS = 128  # spec S3
 MAP_CELL_M = 40.0  # spec S3
 MAP_SIZE_M = MAP_CELLS * MAP_CELL_M
+SURFACE_HEIGHT_M = 1.5  # spec S4: measurement surface (receivers) above ground
 
 
 class NoSiteError(ValueError):

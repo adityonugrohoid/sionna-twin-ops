@@ -6,7 +6,6 @@ from dataclasses import asdict, dataclass
 import numpy as np
 from numpy.typing import NDArray
 
-from sionna_twin_ops.antenna import precoding_vec
 from sionna_twin_ops.backend import active_variant
 from sionna_twin_ops.sionna_rt import mi, rt
 from sionna_twin_ops.site import MAP_CELLS
@@ -41,6 +40,18 @@ class SolverSettings:
     def record(self) -> dict[str, object]:
         """Settings plus the Mitsuba variant, for manifests and result captions."""
         return {"variant": active_variant(), **asdict(self)}
+
+
+def precoding_vec(weights: np.ndarray) -> tuple[mi.Float, mi.Float]:
+    """Weights in the (real, imaginary) form the radio map solver takes.
+
+    Args:
+        weights: Complex per-element weights.
+
+    Returns:
+        (real parts, imaginary parts).
+    """
+    return mi.Float(weights.real.astype(np.float32)), mi.Float(weights.imag.astype(np.float32))
 
 
 DATASET_SAMPLES = 10**8  # owner ruling: dataset maps

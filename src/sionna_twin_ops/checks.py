@@ -6,27 +6,27 @@ from dataclasses import dataclass, replace
 import numpy as np
 from numpy.typing import NDArray
 
-from sionna_twin_ops.antenna import (
-    CARRIER_HZ,
-    precoding_vec,
+from sionna_twin_ops.antenna import CARRIER_HZ, tilt_weights, yaw_for_azimuth
+from sionna_twin_ops.baselines import los_mask, map_geometry
+from sionna_twin_ops.scene import (
+    build_scene,
+    measurement_surface,
     receiver_array,
     sector_array,
-    tilt_weights,
-    yaw_for_azimuth,
 )
-from sionna_twin_ops.scene import SURFACE_HEIGHT_M, build_scene, measurement_surface
 from sionna_twin_ops.sionna_rt import mi, rt
 from sionna_twin_ops.site import (
     MAP_CELL_M,
     MAP_CELLS,
     MAP_SIZE_M,
     MAST_HEIGHT_M,
+    SURFACE_HEIGHT_M,
     Site,
     SiteClass,
     place_site,
     site_class_for,
 )
-from sionna_twin_ops.solve import SolverSettings, solve_map, specular_settings
+from sionna_twin_ops.solve import SolverSettings, precoding_vec, solve_map, specular_settings
 from sionna_twin_ops.terrain import (
     GRID_SPACING_M,
     TILE_SIZE_M,
@@ -119,7 +119,7 @@ def main_lobe_elevation(tilt_deg: float, samples_per_tx: int, seed: int) -> floa
         orientation=mi.Point3f(0.0, -np.pi / 2.0, 0.0),
         size=mi.Point2f(height, 20.0),
         cell_size=mi.Point2f(1.0, 20.0),
-        precoding_vec=precoding_vec(tilt_weights(array, tilt_deg)),
+        precoding_vec=precoding_vec(tilt_weights(tilt_deg)),
         samples_per_tx=samples_per_tx,
         max_depth=0,
         seed=seed,
@@ -189,7 +189,7 @@ def tilt_check(settings: SolverSettings, lobe_samples: int) -> list[TiltRow]:
     mask = far_field_mask()
     rows = []
     for tilt in TILTS_DEG:
-        gain = solve_map(scene, surface, tilt_weights(sector_array(), tilt), settings).path_gain
+        gain = solve_map(scene, surface, tilt_weights(tilt), settings).path_gain
         cells = to_db(gain)[mask]
         rows.append(
             TiltRow(
@@ -210,17 +210,49 @@ class DiffStats:
         median_db: Median absolute difference.
         p95_db: 95th percentile absolute difference.
         bias_db: Mean signed difference (first minus second).
-        valid: Share of cells valid in both maps.
+        valid: Share of the compared region valid in both maps.
+        cells: Number of cells valid in both maps.
     """
 
     median_db: float
     p95_db: float
     bias_db: float
     valid: float
+    cells: int
+
+
+def diff_stats_in(
+    first: NDArray[np.float64], second: NDArray[np.float64], region: NDArray[np.bool_]
+) -> DiffStats:
+    """Compare two linear path-gain maps cell by cell, in dB, inside a region.
+
+    Args:
+        first: Linear path gain map.
+        second: Linear path gain map of the same shape.
+        region: Cells to compare.
+
+    Returns:
+        The statistics over region cells with a hit in both maps.
+
+    Raises:
+        ValueError: If no region cell has a hit in both maps.
+    """
+    a, b = to_db(first), to_db(second)
+    both = np.isfinite(a) & np.isfinite(b) & region
+    if not both.any():
+        raise ValueError("no cell in the region has power in both maps")
+    d = a[both] - b[both]
+    return DiffStats(
+        median_db=float(np.median(np.abs(d))),
+        p95_db=float(np.percentile(np.abs(d), 95)),
+        bias_db=float(d.mean()),
+        valid=float(both.sum() / region.sum()),
+        cells=int(both.sum()),
+    )
 
 
 def diff_stats(first: NDArray[np.float64], second: NDArray[np.float64]) -> DiffStats:
-    """Compare two linear path-gain maps cell by cell, in dB.
+    """Compare two linear path-gain maps cell by cell, in dB, over the whole map.
 
     Args:
         first: Linear path gain map.
@@ -229,15 +261,7 @@ def diff_stats(first: NDArray[np.float64], second: NDArray[np.float64]) -> DiffS
     Returns:
         The statistics over cells with a hit in both maps.
     """
-    a, b = to_db(first), to_db(second)
-    both = np.isfinite(a) & np.isfinite(b)
-    d = a[both] - b[both]
-    return DiffStats(
-        median_db=float(np.median(np.abs(d))),
-        p95_db=float(np.percentile(np.abs(d), 95)),
-        bias_db=float(d.mean()),
-        valid=float(both.mean()),
-    )
+    return diff_stats_in(first, second, np.ones(first.shape, dtype=bool))
 
 
 def planar_map(
@@ -309,7 +333,7 @@ def surface_check(settings: SolverSettings, tilt_deg: float) -> SurfaceCheck:
     terrain, site = flat_terrain(), centre_site()
     scene = build_scene(terrain, site, CHECK_AZIMUTH_DEG)
     surface = measurement_surface(terrain, site)
-    weights = tilt_weights(sector_array(), tilt_deg)
+    weights = tilt_weights(tilt_deg)
     reseeded = replace(settings, seed=settings.seed + 1)
     mesh_a = solve_map(scene, surface, weights, settings).path_gain
     mesh_b = solve_map(scene, surface, weights, reseeded).path_gain
@@ -336,6 +360,8 @@ class FloorRow:
         site_class: Its site class.
         seconds: Wall time per map at each of FLOOR_SAMPLES.
         floor: 1e8 against 1e9, over cells with power in both.
+        floor_los: The same over line-of-sight cells.
+        floor_nlos: The same over non-line-of-sight cells (reached by reflection).
         no_hit: Share of cells with no ray at 1e8 and at 1e9.
         hit_only_at_1e9: Cells with power at 1e9 but none at 1e8.
         hit_only_at_1e8: Cells with power at 1e8 but none at 1e9.
@@ -345,6 +371,8 @@ class FloorRow:
     site_class: SiteClass
     seconds: tuple[float, ...]
     floor: DiffStats
+    floor_los: DiffStats
+    floor_nlos: DiffStats
     no_hit: tuple[float, float]
     hit_only_at_1e9: int
     hit_only_at_1e8: int
@@ -359,7 +387,7 @@ def sampling_floor(seed: int) -> list[FloorRow]:
     Returns:
         One row per terrain in FLOOR_TERRAIN_IDS.
     """
-    weights = tilt_weights(sector_array(), FLOOR_TILT_DEG)
+    weights = tilt_weights(FLOOR_TILT_DEG)
     rows = []
     for terrain_id in FLOOR_TERRAIN_IDS:
         terrain = generate_terrain(terrain_id, GRID_SPACING_M)
@@ -371,12 +399,15 @@ def sampling_floor(seed: int) -> list[FloorRow]:
             for samples in FLOOR_SAMPLES
         ]
         g8, g9 = results[1].path_gain, results[2].path_gain
+        los = los_mask(map_geometry(terrain, site))
         rows.append(
             FloorRow(
                 terrain_id=terrain_id,
                 site_class=site.site_class,
                 seconds=tuple(r.seconds for r in results),
                 floor=diff_stats(g8, g9),
+                floor_los=diff_stats_in(g8, g9, los),
+                floor_nlos=diff_stats_in(g8, g9, ~los),
                 no_hit=(float((g8 == 0).mean()), float((g9 == 0).mean())),
                 hit_only_at_1e9=int(((g8 == 0) & (g9 > 0)).sum()),
                 hit_only_at_1e8=int(((g8 > 0) & (g9 == 0)).sum()),
@@ -476,18 +507,23 @@ def solver_check_markdown(
         f"Terrains {', '.join(str(r.terrain_id) for r in floor_rows)}, azimuth "
         f"{CHECK_AZIMUTH_DEG:.0f}, tilt {FLOOR_TILT_DEG:.0f}, the ruled settings "
         "(line of sight and specular reflection, max_depth 3). The floor compares 1e8 with "
-        "1e9 samples over cells with power in both. Rays are launched on a fixed lattice, "
+        "1e9 samples over cells with power in both, overall and split by the LOS mask "
+        "(see `baselines.py`). Rays are launched on a fixed lattice, "
         "so the seed does not change these maps; the sample count does.",
         "",
-        "| terrain | site | s/map 1e7 | s/map 1e8 | s/map 1e9 | floor median | floor p95 | "
-        "no-hit 1e8 | no-hit 1e9 | hit only at 1e9 | hit only at 1e8 |",
-        "|---|---|---|---|---|---|---|---|---|---|---|",
+        "| terrain | site | s/map 1e7 | s/map 1e8 | s/map 1e9 | floor median / p95 | "
+        "LOS median / p95 (cells) | NLOS median / p95 (cells) | no-hit 1e8 | no-hit 1e9 | "
+        "hit only at 1e9 | hit only at 1e8 |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for f in floor_rows:
         s7, s8, s9 = f.seconds
         lines.append(
             f"| {f.terrain_id} | {f.site_class} | {s7:.1f} | {s8:.1f} | {s9:.1f} | "
-            f"{f.floor.median_db:.3f} | {f.floor.p95_db:.3f} | {f.no_hit[0] * 100:.2f}% | "
-            f"{f.no_hit[1] * 100:.2f}% | {f.hit_only_at_1e9} | {f.hit_only_at_1e8} |"
+            f"{f.floor.median_db:.3f} / {f.floor.p95_db:.3f} | "
+            f"{f.floor_los.median_db:.3f} / {f.floor_los.p95_db:.3f} ({f.floor_los.cells}) | "
+            f"{f.floor_nlos.median_db:.3f} / {f.floor_nlos.p95_db:.3f} ({f.floor_nlos.cells}) | "
+            f"{f.no_hit[0] * 100:.2f}% | {f.no_hit[1] * 100:.2f}% | {f.hit_only_at_1e9} | "
+            f"{f.hit_only_at_1e8} |"
         )
     return "\n".join(lines) + "\n"
