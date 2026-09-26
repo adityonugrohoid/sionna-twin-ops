@@ -54,8 +54,12 @@ def precoding_vec(weights: np.ndarray) -> tuple[mi.Float, mi.Float]:
     return mi.Float(weights.real.astype(np.float32)), mi.Float(weights.imag.astype(np.float32))
 
 
-DATASET_SAMPLES = 10**8  # owner ruling: dataset maps
+DATASET_SAMPLES = 10**9  # owner ruling (spec N7): dataset maps, on the GPU
 DEV_SAMPLES = 10**7  # owner ruling: tests and development runs
+# Mitsuba's sampler takes a 32-bit wavefront size, so one transmitter can launch at most
+# 2**32 - 1 rays per solve; the Fibonacci ray lattice makes repeated solves identical.
+MAX_SAMPLES_PER_TX = 2**32 - 1
+REFERENCE_SAMPLES = 4 * 10**9  # the sampling-floor reference, the largest under the cap
 
 
 def specular_settings(samples_per_tx: int, seed: int) -> SolverSettings:
@@ -71,7 +75,15 @@ def specular_settings(samples_per_tx: int, seed: int) -> SolverSettings:
 
     Returns:
         The settings.
+
+    Raises:
+        ValueError: If samples_per_tx is not between 1 and MAX_SAMPLES_PER_TX.
     """
+    if not 1 <= samples_per_tx <= MAX_SAMPLES_PER_TX:
+        raise ValueError(
+            f"samples_per_tx {samples_per_tx} outside 1..{MAX_SAMPLES_PER_TX}: Mitsuba's "
+            "sampler wavefront is 32-bit"
+        )
     return SolverSettings(
         samples_per_tx=samples_per_tx,
         max_depth=3,
