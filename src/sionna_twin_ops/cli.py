@@ -164,6 +164,14 @@ def main(argv: list[str] | None = None) -> int:
     compare.add_argument("--reference", type=Path, required=True, help="reference run directory")
     compare.add_argument("--candidate", type=Path, required=True, help="candidate run directory")
     compare.add_argument("--out", type=Path, required=True, help="markdown file to write")
+    sweep_cmd = commands.add_parser("dataset-sweep", help="trace the dataset maps (resumable)")
+    sweep_cmd.add_argument(
+        "--variant", default=DEFAULT_VARIANT, help=f"Mitsuba variant (default {DEFAULT_VARIANT})"
+    )
+    sweep_cmd.add_argument("--out", type=Path, required=True, help="dataset directory")
+    summary_cmd = commands.add_parser("dataset-summary", help="write the committed dataset summary")
+    summary_cmd.add_argument("--dataset", type=Path, required=True, help="dataset directory")
+    summary_cmd.add_argument("--out", type=Path, required=True, help="markdown file to write")
     args = parser.parse_args(argv)
 
     if args.command == "env":
@@ -201,6 +209,30 @@ def main(argv: list[str] | None = None) -> int:
         from sionna_twin_ops.crosscheck import compare_markdown
 
         report = compare_markdown(args.reference, args.candidate)
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(report, newline="\n")
+        sys.stdout.write(report)
+        return 0
+    if args.command == "dataset-sweep":
+        from sionna_twin_ops.backend import select_variant
+
+        select_variant(args.variant)
+        from sionna_twin_ops.dataset import (
+            SOLVER_SEED,
+            TERRAINS_PER_CLASS,
+            select_terrains,
+            sweep,
+        )
+        from sionna_twin_ops.solve import DATASET_SAMPLES
+
+        selection = select_terrains(TERRAINS_PER_CLASS)
+        traced = sweep(args.out, selection.terrains, DATASET_SAMPLES, SOLVER_SEED)
+        sys.stdout.write(f"traced {traced} maps into {args.out}\n")
+        return 0
+    if args.command == "dataset-summary":
+        from sionna_twin_ops.dataset import summary_markdown
+
+        report = summary_markdown(args.dataset)
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(report, newline="\n")
         sys.stdout.write(report)
