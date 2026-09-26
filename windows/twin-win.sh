@@ -43,5 +43,9 @@ else
     mv "$code.tmp" "$code"
 fi
 
+# PowerShell would bind tokens like --out to its own parameters, so the twin arguments go
+# over as one base64-encoded JSON array.
+args_b64=$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1:]))' "$@" | base64 -w0)
 exec powershell.exe -NoProfile -ExecutionPolicy Bypass \
-    -File "$(wslpath -w "$code/windows/run.ps1")" -Root "$root_win" -Commit "$short" "$@"
+    -File "$(wslpath -w "$code/windows/run.ps1")" -Root "$root_win" -Commit "$short" \
+    -TwinArgsBase64 "$args_b64"

@@ -2,7 +2,10 @@
 #
 # Called by windows/twin-win.sh from WSL; it lives inside the snapshot it runs:
 #   powershell -NoProfile -ExecutionPolicy Bypass -File <Root>\code\<commit>\windows\run.ps1 `
-#       -Root <Root> -Commit <commit> <twin arguments...>
+#       -Root <Root> -Commit <commit> -TwinArgsBase64 <base64 of a JSON array of strings>
+#
+# The twin arguments travel as base64 JSON because PowerShell would otherwise bind tokens
+# such as --out to its own common parameters.
 #
 # The snapshot's own uv.lock sets the packages. The first run for a commit builds its venv
 # at <Root>\venvs\<commit>; torch, triton, nvidia-* and cuda-* are left out (no training
@@ -11,7 +14,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$Root,
     [Parameter(Mandatory = $true)][string]$Commit,
-    [Parameter(ValueFromRemainingArguments = $true)][string[]]$TwinArgs
+    [Parameter(Mandatory = $true)][string]$TwinArgsBase64
 )
 
 $ErrorActionPreference = 'Stop'
@@ -49,6 +52,10 @@ if (-not (Test-Path $venv)) {
     if ($LASTEXITCODE -ne 0) { throw "project install failed ($LASTEXITCODE)" }
     Rename-Item $building (Split-Path $venv -Leaf)
 }
+
+$json = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($TwinArgsBase64))
+$TwinArgs = @(ConvertFrom-Json $json)
+Write-Host ("twin " + ($TwinArgs -join ' '))
 
 $env:TWIN_COMMIT = $fullSha
 & (Join-Path $venv 'Scripts\twin.exe') @TwinArgs
