@@ -70,6 +70,9 @@ uv run twin backend-check --reference runs/backend/<commit>/llvm \
 The report lists both runs' provenance (commit, variant, platform, package versions, GPU
 and driver), the per-cell agreement split by the LOS mask, and the time per map.
 
+A recorded commit may be a pull-request branch commit that a squash merge left off
+`main`; it stays reachable through the pull request's ref, `refs/pull/<N>/head`.
+
 ## Clean up
 
 A runner folder holds only generated files: the uv binary, Python, the package cache,
