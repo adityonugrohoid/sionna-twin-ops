@@ -1,43 +1,25 @@
-"""Antenna weights and scene geometry (spec rules A and S4). No ray tracing."""
+"""Sionna array and scene geometry (spec rules A and S4). No ray tracing."""
 
 import numpy as np
 import pytest
 
 pytestmark = pytest.mark.sionna
 
-from sionna_twin_ops.antenna import (  # noqa: E402
-    NUM_ROWS,
-    VERTICAL_SPACING_WL,
-    sector_array,
-    tilt_weights,
-    yaw_for_azimuth,
+from sionna_twin_ops.antenna import element_heights_wl  # noqa: E402
+from sionna_twin_ops.scene import grid_faces, measurement_surface, sector_array  # noqa: E402
+from sionna_twin_ops.site import (  # noqa: E402
+    MAP_CELL_M,
+    MAP_CELLS,
+    SURFACE_HEIGHT_M,
+    place_site,
+    site_class_for,
 )
-from sionna_twin_ops.scene import SURFACE_HEIGHT_M, grid_faces, measurement_surface  # noqa: E402
-from sionna_twin_ops.site import MAP_CELL_M, MAP_CELLS, place_site, site_class_for  # noqa: E402
 from sionna_twin_ops.terrain import generate_terrain  # noqa: E402
 
 
-@pytest.mark.parametrize("tilt", [0.0, 3.0, 12.0])
-def test_tilt_weights_have_unit_power_and_a_linear_phase_taper(tilt: float) -> None:
-    w = tilt_weights(sector_array(), tilt)
-    assert w.shape == (NUM_ROWS,)
-    assert np.sum(np.abs(w) ** 2) == pytest.approx(1.0)
-    # Row 0 is the top element; the phase steps down by 2 pi d sin(tilt) per row.
-    step = np.angle(w[1:] * np.conj(w[:-1]))
-    expected = -2.0 * np.pi * VERTICAL_SPACING_WL * np.sin(np.radians(tilt))
-    assert np.allclose(step, expected)
-
-
-def test_zero_tilt_is_uniform() -> None:
-    w = tilt_weights(sector_array(), 0.0)
-    assert np.allclose(w, 1.0 / np.sqrt(NUM_ROWS))
-
-
-@pytest.mark.parametrize(
-    ("azimuth", "yaw"), [(0.0, 90.0), (90.0, 0.0), (180.0, -90.0), (270.0, -180.0)]
-)
-def test_azimuth_is_clockwise_from_north(azimuth: float, yaw: float) -> None:
-    assert np.degrees(yaw_for_azimuth(azimuth)) == pytest.approx(yaw)
+def test_numpy_element_heights_match_sionna_array_geometry() -> None:
+    sionna_z = np.asarray(sector_array().normalized_positions.z.numpy(), dtype=np.float64)
+    assert np.allclose(element_heights_wl(), sionna_z)
 
 
 def test_grid_faces_cover_each_cell_with_two_triangles() -> None:

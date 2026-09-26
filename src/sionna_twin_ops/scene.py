@@ -6,21 +6,40 @@ Both meshes are built in memory from the heightmap; no scene file is read or wri
 import numpy as np
 from numpy.typing import NDArray
 
-from sionna_twin_ops.antenna import (
-    CARRIER_HZ,
-    receiver_array,
-    sector_array,
-    yaw_for_azimuth,
-)
+from sionna_twin_ops.antenna import CARRIER_HZ, NUM_ROWS, VERTICAL_SPACING_WL, yaw_for_azimuth
 from sionna_twin_ops.sionna_rt import mi, rt
-from sionna_twin_ops.site import MAP_CELL_M, MAP_CELLS, Site
+from sionna_twin_ops.site import MAP_CELL_M, MAP_CELLS, SURFACE_HEIGHT_M, Site
 from sionna_twin_ops.terrain import Terrain
 
 GROUND_MATERIAL = "medium_dry_ground"  # ASSUMPTION (spec T4): one ITU material everywhere
 # ASSUMPTION: Sionna models a material as a slab; 10 m of medium dry ground at 1.8 GHz is
 # opaque, so the slab stands in for a half-space.
 GROUND_THICKNESS_M = 10.0
-SURFACE_HEIGHT_M = 1.5  # spec S4: measurement surface above ground
+
+
+def sector_array() -> rt.PlanarArray:
+    """The sector antenna as a Sionna array: 8 rows x 1 column, 0.8 wavelength spacing,
+    TR 38.901 elements, vertical polarization (see `antenna.py`).
+
+    Returns:
+        The array, boresight along its local +x axis.
+    """
+    return rt.PlanarArray(
+        num_rows=NUM_ROWS,
+        num_cols=1,
+        vertical_spacing=VERTICAL_SPACING_WL,
+        pattern="tr38901",
+        polarization="V",
+    )
+
+
+def receiver_array() -> rt.PlanarArray:
+    """Receive side of the map: one isotropic, vertically polarized element.
+
+    Returns:
+        A single-element array.
+    """
+    return rt.PlanarArray(num_rows=1, num_cols=1, pattern="iso", polarization="V")
 
 
 def grid_faces(rows: int, cols: int) -> NDArray[np.uint32]:
