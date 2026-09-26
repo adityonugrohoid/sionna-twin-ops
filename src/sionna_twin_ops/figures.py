@@ -16,6 +16,8 @@ from matplotlib.patches import Rectangle
 from sionna_twin_ops.site import SEARCH_HALF_WIDTH_M, map_bounds, place_site, site_class_for
 from sionna_twin_ops.terrain import BASE_SEED, RELIEF_RANGE_M, Terrain, generate_terrain
 
+matplotlib.rcParams["axes.unicode_minus"] = False  # ASCII hyphen-minus in tick labels
+
 HEIGHT_NORM = Normalize(vmin=0.0, vmax=RELIEF_RANGE_M[1])
 CMAP = "gist_earth"
 SITE_STYLE = {
@@ -136,4 +138,60 @@ def site_placement(ids: list[int], spacing_m: float, path: Path) -> None:
         fontsize=8,
     )
     fig.savefig(path, dpi=100, pil_kwargs={"quality": 85})
+    plt.close(fig)
+
+
+SERIES = "#2a78d6"
+INK = "#0b0b0b"
+INK_MUTED = "#52514e"
+SURFACE = "#fcfcfb"
+
+
+def tilt_check_figure(
+    tilts_deg: list[float],
+    lobe_elevations_deg: list[float],
+    far_field_medians_db: list[float],
+    caption: str,
+    path: Path,
+) -> None:
+    """The flat-plain tilt check (spec A4) as two panels.
+
+    Args:
+        tilts_deg: Commanded electrical tilts.
+        lobe_elevations_deg: Measured main-lobe elevations (negative is down).
+        far_field_medians_db: Far-field median path gain at each tilt.
+        caption: Provenance and reading notes, printed under the panels.
+        path: Output image file.
+    """
+    fig, (left, right) = plt.subplots(1, 2, figsize=(9.0, 3.9), layout="constrained")
+    fig.patch.set_facecolor(SURFACE)
+    downtilt = [-e for e in lobe_elevations_deg]
+    left.plot(tilts_deg, tilts_deg, ls="--", lw=1, color=INK_MUTED, label="commanded")
+    left.plot(tilts_deg, downtilt, "o-", lw=2, ms=8, color=SERIES, mec=SURFACE, mew=2)
+    for t, d in zip(tilts_deg, downtilt, strict=True):
+        left.annotate(
+            f"{d - t:+.2f}",
+            (t, d),
+            textcoords="offset points",
+            xytext=(6, -12),
+            fontsize=7,
+            color=INK_MUTED,
+        )
+    left.set_xlabel("commanded tilt (deg)", color=INK)
+    left.set_ylabel("measured main-lobe downtilt (deg)", color=INK)
+    left.set_title("Main lobe follows the commanded tilt", fontsize=9, color=INK, loc="left")
+    right.plot(tilts_deg, far_field_medians_db, "o-", lw=2, ms=8, color=SERIES, mec=SURFACE, mew=2)
+    right.set_xlabel("commanded tilt (deg)", color=INK)
+    right.set_ylabel("far-field median path gain (dB)", color=INK)
+    right.set_title("Far-field gain across tilt", fontsize=9, color=INK, loc="left")
+    for ax in (left, right):
+        ax.set_facecolor(SURFACE)
+        ax.grid(color="#e4e3df", lw=0.8)
+        ax.tick_params(colors=INK_MUTED, labelsize=8)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+        for side in ("left", "bottom"):
+            ax.spines[side].set_color(INK_MUTED)
+    fig.text(0.01, -0.02, caption, fontsize=7, color=INK_MUTED, ha="left", va="top", wrap=True)
+    fig.savefig(path, dpi=110, bbox_inches="tight", facecolor=SURFACE)
     plt.close(fig)
