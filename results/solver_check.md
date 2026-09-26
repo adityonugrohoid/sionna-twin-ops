@@ -4,9 +4,9 @@ Synthetic terrain and a flat test tile, not a real place. Propagation: Sionna RT
 
 | provenance | |
 |---|---|
-| commit | 474693ab941ae645936633955c27bbeb9ed03ee2 |
-| variant | llvm_ad_mono_polarized |
-| platform | Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39 |
+| commit | 34713e4cba614eb5e4c5f775eefc78b48c87b1ae |
+| variant | cuda_ad_mono_polarized |
+| platform | Windows-11-10.0.26200-SP0 |
 | python | 3.13.12 |
 | sionna-rt | 2.1.0 |
 | mitsuba | 3.9.1 |
@@ -18,7 +18,7 @@ Settings of the A4 and S5 maps:
 
 | setting | value |
 |---|---|
-| variant | llvm_ad_mono_polarized |
+| variant | cuda_ad_mono_polarized |
 | samples_per_tx | 10000000 |
 | max_depth | 3 |
 | los | True |
@@ -51,16 +51,26 @@ Flat tile. The mesh surface at 1.5 m against a planar radio map at 1.5 m, same c
 
 | comparison | median abs | p95 abs | bias | cells |
 |---|---|---|---|---|
-| mesh surface vs planar map | 1.9e-07 | 6.4e-07 | +4.2e-06 | 100.0% |
-| planar map, seed vs seed + 1 | 0.0e+00 | 0.0e+00 | +3.3e-09 | 100.0% |
-| mesh surface, seed vs seed + 1 | 0.0e+00 | 0.0e+00 | +6.9e-10 | 100.0% |
+| mesh surface vs planar map | 2.2e-07 | 1.3e-06 | +4.3e-06 | 100.0% |
+| planar map, seed vs seed + 1 | 0.0e+00 | 5.1e-07 | +4.7e-09 | 100.0% |
+| mesh surface, seed vs seed + 1 | 0.0e+00 | 3.4e-07 | +3.0e-10 | 100.0% |
 
 ## Time per map and the sampling floor (N3)
 
-Terrains 3, 1, 5, azimuth 90, tilt 6, the ruled settings (line of sight and specular reflection, max_depth 3). The floor compares 1e8 with 1e9 samples over cells with power in both, overall and split by the LOS mask (see `baselines.py`). Rays are launched on a fixed lattice, so the seed does not change these maps; the sample count does.
+Terrains 3, 1, 5, azimuth 90, tilt 6, the ruled settings (line of sight and specular reflection, max_depth 3), compared over cells with power in both, overall and split by the LOS mask (see `baselines.py`).
 
-| terrain | site | s/map 1e7 | s/map 1e8 | s/map 1e9 | floor median / p95 | LOS median / p95 (cells) | NLOS median / p95 (cells) | no-hit 1e8 | no-hit 1e9 | hit only at 1e9 | hit only at 1e8 |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| 3 | hilltop | 0.3 | 3.0 | 30.2 | 0.023 / 0.484 | 0.019 / 0.314 (5608) | 0.094 / 1.874 (900) | 60.28% | 60.14% | 23 | 0 |
-| 1 | slope | 0.4 | 3.5 | 35.0 | 0.021 / 0.448 | 0.016 / 0.236 (2236) | 0.061 / 1.477 (628) | 82.52% | 82.41% | 18 | 0 |
-| 5 | valley | 0.3 | 3.1 | 29.4 | 0.035 / 0.581 | 0.030 / 0.391 (6111) | 0.109 / 1.721 (970) | 56.78% | 56.50% | 46 | 0 |
+The floor compares the dataset's 1e+09 rays with 4e+09. A larger reference is not possible: Mitsuba's sampler wavefront is 32-bit, so one solve launches at most 4294967295 rays, and repeating solves adds nothing because the rays come from the same deterministic lattice each time (the seed does not change these maps). A 4x step understates the error against the fully converged map more than the earlier 10x step (1e+08 vs 1e+09) did; that step is listed after the main table as context.
+
+| terrain | site | s/map 1e+07 | s/map 1e+08 | s/map 1e+09 | s/map 4e+09 | floor median / p95 | LOS median / p95 (cells) | NLOS median / p95 (cells) | no-hit 1e+09 | no-hit 4e+09 | hit only at 4e+09 | hit only at 1e+09 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 3 | hilltop | 0.01 | 0.11 | 1.03 | 4.08 | 0.005 / 0.091 | 0.004 / 0.059 (5609) | 0.016 / 0.587 (921) | 60.14% | 60.10% | 7 | 1 |
+| 1 | slope | 0.01 | 0.10 | 1.01 | 4.05 | 0.005 / 0.114 | 0.004 / 0.066 (2236) | 0.012 / 0.396 (645) | 82.41% | 82.39% | 4 | 1 |
+| 5 | valley | 0.01 | 0.09 | 0.86 | 3.44 | 0.006 / 0.138 | 0.005 / 0.083 (6112) | 0.019 / 0.825 (1015) | 56.50% | 56.46% | 7 | 0 |
+
+Context, 1e+08 against 1e+09:
+
+| terrain | site | LOS median / p95 (cells) | NLOS median / p95 (cells) |
+|---|---|---|---|
+| 3 | hilltop | 0.019 / 0.314 (5608) | 0.094 / 1.874 (900) |
+| 1 | slope | 0.017 / 0.238 (2236) | 0.062 / 1.477 (628) |
+| 5 | valley | 0.030 / 0.391 (6111) | 0.111 / 1.743 (970) |
