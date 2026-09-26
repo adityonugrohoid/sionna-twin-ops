@@ -1,0 +1,39 @@
+# Solver check
+
+Synthetic terrain and a flat test tile, not a real place. Propagation: Sionna RT 2.1.0 (Mitsuba 3.9.1, variant llvm_ad_mono_polarized); pattern: 3GPP TR 38.901. Line of sight and specular reflection only. Written by `twin solver-check`.
+
+A4 and S5 maps: {'variant': 'llvm_ad_mono_polarized', 'samples_per_tx': 10000000, 'max_depth': 3, 'los': True, 'specular_reflection': True, 'diffuse_reflection': False, 'refraction': False, 'diffraction': False, 'edge_diffraction': False, 'seed': 1}. Main-lobe measurements: free space, 1e+08 rays, a vertical planar map 200 m out on boresight with 1 m cells.
+
+## A4 flat-plain tilt check: PASS
+
+Criteria: main-lobe elevation within 1.0 deg of the commanded tilt; far-field median moves by at least 6.0 dB across the tilts. Far field (ASSUMPTION): cells 1500 to 2500 m from the site within 60 deg of boresight.
+
+| tilt (deg) | main-lobe elevation (deg) | error (deg) | far-field median (dB) | far-field cells hit |
+|---|---|---|---|---|
+| 0 | +0.02 | +0.02 | -87.04 | 100.0% |
+| 3 | -2.93 | +0.07 | -87.75 | 100.0% |
+| 6 | -5.86 | +0.14 | -92.25 | 100.0% |
+| 9 | -8.79 | +0.21 | -107.07 | 100.0% |
+| 12 | -11.67 | +0.33 | -101.72 | 100.0% |
+
+Largest lobe error 0.33 deg; far-field span 20.0 dB. The median is not monotonic in tilt: the 8-element, 0.8-wavelength column has nulls about 9 deg apart, so as the lobe tilts down the far-field ring passes through the first null and then the first side lobe.
+
+## S5 measurement-surface check
+
+Flat tile. The mesh surface at 1.5 m against a planar radio map at 1.5 m, same cells and settings; the two-seed spreads show the noise each map has on its own. Values in dB over cells with power in both maps.
+
+| comparison | median abs | p95 abs | bias | cells |
+|---|---|---|---|---|
+| mesh surface vs planar map | 1.9e-07 | 6.5e-07 | +4.2e-06 | 100.0% |
+| planar map, seed vs seed + 1 | 0.0e+00 | 0.0e+00 | -2.6e-09 | 100.0% |
+| mesh surface, seed vs seed + 1 | 0.0e+00 | 0.0e+00 | -1.6e-09 | 100.0% |
+
+## Time per map and the sampling floor (N3)
+
+Terrains 3, 1, 5, azimuth 90, tilt 6, the ruled settings (line of sight and specular reflection, max_depth 3). The floor compares 1e8 with 1e9 samples over cells with power in both. Rays are launched on a fixed lattice, so the seed does not change these maps; the sample count does.
+
+| terrain | site | s/map 1e7 | s/map 1e8 | s/map 1e9 | floor median | floor p95 | no-hit 1e8 | no-hit 1e9 | hit only at 1e9 | hit only at 1e8 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 3 | hilltop | 0.3 | 2.8 | 28.6 | 0.023 | 0.484 | 60.28% | 60.14% | 23 | 0 |
+| 1 | slope | 0.3 | 3.2 | 32.0 | 0.021 | 0.448 | 82.52% | 82.41% | 18 | 0 |
+| 5 | valley | 0.3 | 2.8 | 27.4 | 0.035 | 0.581 | 56.78% | 56.50% | 46 | 0 |
