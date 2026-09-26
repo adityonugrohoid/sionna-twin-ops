@@ -6,9 +6,10 @@ import pytest
 from sionna_twin_ops.terrain import (
     BASE_SEED,
     BETA_RANGE,
-    MAX_RIDGES,
     RELIEF_RANGE_M,
+    RIDGE_WEIGHT_RANGE,
     generate_terrain,
+    ridge_term,
     spectral_noise,
 )
 
@@ -34,30 +35,28 @@ def test_different_ids_differ() -> None:
     )
 
 
-@pytest.mark.parametrize(("spacing", "n"), [(40.0, 201), (20.0, 401)])
-def test_grid_covers_the_tile(spacing: float, n: int) -> None:
+@pytest.mark.parametrize(("spacing", "n"), [(40.0, 251), (20.0, 501)])
+def test_grid_covers_the_10_km_tile(spacing: float, n: int) -> None:
     terrain = generate_terrain(0, spacing)
     assert terrain.heights_m.shape == (n, n)
-    assert terrain.coords_m[0] == -4000.0
-    assert terrain.coords_m[-1] == 4000.0
+    assert terrain.coords_m[0] == -5000.0
+    assert terrain.coords_m[-1] == 5000.0
     assert np.allclose(np.diff(terrain.coords_m), spacing)
 
 
 def test_parameters_and_heights_stay_in_range() -> None:
-    ridge_counts = set()
     for terrain_id in range(60):
         terrain = generate_terrain(terrain_id, 40.0)
         p = terrain.params
         assert RELIEF_RANGE_M[0] <= p.relief_m <= RELIEF_RANGE_M[1]
         assert BETA_RANGE[0] <= p.beta <= BETA_RANGE[1]
-        assert 0 <= len(p.ridges) <= MAX_RIDGES
-        ridge_counts.add(len(p.ridges))
+        assert RIDGE_WEIGHT_RANGE[0] <= p.ridge_weight <= RIDGE_WEIGHT_RANGE[1]
+        assert np.isfinite(terrain.heights_m).all()
         assert terrain.heights_m.min() == 0.0
         assert terrain.heights_m.max() == pytest.approx(p.relief_m)
-    assert ridge_counts == {0, 1, 2}
 
 
-@pytest.mark.parametrize("beta", [2.0, 2.6, 3.2])
+@pytest.mark.parametrize("beta", [3.2, 3.6, 4.0])
 def test_noise_spectrum_follows_the_power_law(beta: float) -> None:
     n, spacing = 256, 40.0
     rng = np.random.default_rng([BASE_SEED, 999])
@@ -70,6 +69,14 @@ def test_noise_spectrum_follows_the_power_law(beta: float) -> None:
     nonzero = k > 0
     slope = np.polyfit(np.log(k[nonzero]), np.log(power[nonzero]), 1)[0]
     assert slope == pytest.approx(-beta, abs=0.05)
+
+
+def test_ridge_term_peaks_at_one_and_stays_in_unit_range() -> None:
+    term = ridge_term(251, 40.0, np.random.default_rng([BASE_SEED, 999]))
+    assert term.min() >= 0.0
+    assert term.max() <= 1.0
+    # Crests exist: the field crosses zero, so the term reaches (almost) 1.
+    assert term.max() > 0.99
 
 
 def test_invalid_arguments_raise() -> None:
