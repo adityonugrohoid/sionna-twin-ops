@@ -426,9 +426,14 @@ def solver_check_markdown(
         "",
         header,
         "",
-        f"A4 and S5 maps: {settings.record()}. Main-lobe measurements: free space, "
-        f"{lobe_samples:.0e} rays, a vertical planar map {LOBE_DISTANCE_M:.0f} m out on "
-        "boresight with 1 m cells.",
+        "Settings of the A4 and S5 maps:",
+        "",
+        "| setting | value |",
+        "|---|---|",
+        *(f"| {key} | {value} |" for key, value in settings.record().items()),
+        "",
+        f"Main-lobe measurements: free space, {lobe_samples:.0e} rays, a vertical planar map "
+        f"{LOBE_DISTANCE_M:.0f} m out on boresight with 1 m cells.",
         "",
         f"## A4 flat-plain tilt check: {verdict(a4_pass)}",
         "",

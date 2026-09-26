@@ -2,7 +2,22 @@
 
 Synthetic terrain and a flat test tile, not a real place. Propagation: Sionna RT 2.1.0 (Mitsuba 3.9.1, variant llvm_ad_mono_polarized); pattern: 3GPP TR 38.901. Line of sight and specular reflection only. Written by `twin solver-check`.
 
-A4 and S5 maps: {'variant': 'llvm_ad_mono_polarized', 'samples_per_tx': 10000000, 'max_depth': 3, 'los': True, 'specular_reflection': True, 'diffuse_reflection': False, 'refraction': False, 'diffraction': False, 'edge_diffraction': False, 'seed': 1}. Main-lobe measurements: free space, 1e+08 rays, a vertical planar map 200 m out on boresight with 1 m cells.
+Settings of the A4 and S5 maps:
+
+| setting | value |
+|---|---|
+| variant | llvm_ad_mono_polarized |
+| samples_per_tx | 10000000 |
+| max_depth | 3 |
+| los | True |
+| specular_reflection | True |
+| diffuse_reflection | False |
+| refraction | False |
+| diffraction | False |
+| edge_diffraction | False |
+| seed | 1 |
+
+Main-lobe measurements: free space, 1e+08 rays, a vertical planar map 200 m out on boresight with 1 m cells.
 
 ## A4 flat-plain tilt check: PASS
 
@@ -25,8 +40,8 @@ Flat tile. The mesh surface at 1.5 m against a planar radio map at 1.5 m, same c
 | comparison | median abs | p95 abs | bias | cells |
 |---|---|---|---|---|
 | mesh surface vs planar map | 1.9e-07 | 6.5e-07 | +4.2e-06 | 100.0% |
-| planar map, seed vs seed + 1 | 0.0e+00 | 0.0e+00 | -2.6e-09 | 100.0% |
-| mesh surface, seed vs seed + 1 | 0.0e+00 | 0.0e+00 | -1.6e-09 | 100.0% |
+| planar map, seed vs seed + 1 | 0.0e+00 | 0.0e+00 | -1.1e-09 | 100.0% |
+| mesh surface, seed vs seed + 1 | 0.0e+00 | 0.0e+00 | +5.8e-10 | 100.0% |
 
 ## Time per map and the sampling floor (N3)
 
@@ -34,6 +49,6 @@ Terrains 3, 1, 5, azimuth 90, tilt 6, the ruled settings (line of sight and spec
 
 | terrain | site | s/map 1e7 | s/map 1e8 | s/map 1e9 | floor median | floor p95 | no-hit 1e8 | no-hit 1e9 | hit only at 1e9 | hit only at 1e8 |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 3 | hilltop | 0.3 | 2.8 | 28.6 | 0.023 | 0.484 | 60.28% | 60.14% | 23 | 0 |
-| 1 | slope | 0.3 | 3.2 | 32.0 | 0.021 | 0.448 | 82.52% | 82.41% | 18 | 0 |
-| 5 | valley | 0.3 | 2.8 | 27.4 | 0.035 | 0.581 | 56.78% | 56.50% | 46 | 0 |
+| 3 | hilltop | 0.3 | 2.7 | 27.9 | 0.023 | 0.484 | 60.28% | 60.14% | 23 | 0 |
+| 1 | slope | 0.3 | 3.2 | 32.1 | 0.021 | 0.448 | 82.52% | 82.41% | 18 | 0 |
+| 5 | valley | 0.3 | 2.7 | 27.3 | 0.035 | 0.581 | 56.78% | 56.50% | 46 | 0 |

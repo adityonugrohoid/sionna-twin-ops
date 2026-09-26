@@ -1,10 +1,10 @@
 """Sector antenna (spec rule A): an 8 x 1 vertical column of TR 38.901 elements.
 
-Element pattern: 3GPP TR 38.901 V19.5.0 (2026-09), Release 19, clause 7.3, Table 7.3-1
-(unchanged since V14.0.0; 65 degree 3 dB beamwidth in both cuts,
-30 dB side-lobe and front-to-back limits, 8 dBi maximum element gain), as implemented by
-Sionna RT's "tr38901" pattern. The array size and spacing are ASSUMPTION: TR 38.901 does
-not fix a macro panel.
+Element pattern: 3GPP TR 38.901 version 19.5.0 Release 19 (ETSI TR 138 901 V19.5.0,
+2026-09), clause 7.3.0, Table 7.3-1: theta_3dB = phi_3dB = 65 deg, SLA_V = A_max = 30 dB,
+G_E,max = 8 dBi, as implemented by Sionna RT's "tr38901" pattern. Read from
+https://www.etsi.org/deliver/etsi_tr/138900_138999/138901/19.05.00_60/tr_138901v190500p.pdf
+The array size and spacing are ASSUMPTION: TR 38.901 does not fix a macro panel.
 """
 
 import numpy as np
