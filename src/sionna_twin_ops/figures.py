@@ -81,8 +81,7 @@ def terrain_grid(ids: list[int], spacing_m: float, path: Path) -> None:
         p = terrain.params
         _show(ax, terrain)
         ax.set_title(
-            f"id {terrain_id}: relief {p.relief_m:.0f} m\n"
-            f"beta {p.beta:.2f}, ridge weight {p.ridge_weight:.2f}",
+            f"id {terrain_id}: relief {p.relief_m:.0f} m, beta {p.beta:.2f}",
             fontsize=6,
             loc="left",
         )
@@ -124,7 +123,7 @@ def site_placement(ids: list[int], spacing_m: float, path: Path) -> None:
         ax.set_title(
             f"id {terrain_id} {site.site_class}: ({site.x_m:.0f}, {site.y_m:.0f}) m, "
             f"ground {site.ground_m:.0f} m, map percentile {site.percentile:.0f}\n"
-            f"relief {p.relief_m:.0f} m, beta {p.beta:.2f}, ridge weight {p.ridge_weight:.2f}",
+            f"relief {p.relief_m:.0f} m, beta {p.beta:.2f}",
             fontsize=7,
             loc="left",
         )

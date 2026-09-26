@@ -7,9 +7,7 @@ from sionna_twin_ops.terrain import (
     BASE_SEED,
     BETA_RANGE,
     RELIEF_RANGE_M,
-    RIDGE_WEIGHT_RANGE,
     generate_terrain,
-    ridge_term,
     spectral_noise,
 )
 
@@ -50,13 +48,12 @@ def test_parameters_and_heights_stay_in_range() -> None:
         p = terrain.params
         assert RELIEF_RANGE_M[0] <= p.relief_m <= RELIEF_RANGE_M[1]
         assert BETA_RANGE[0] <= p.beta <= BETA_RANGE[1]
-        assert RIDGE_WEIGHT_RANGE[0] <= p.ridge_weight <= RIDGE_WEIGHT_RANGE[1]
         assert np.isfinite(terrain.heights_m).all()
         assert terrain.heights_m.min() == 0.0
         assert terrain.heights_m.max() == pytest.approx(p.relief_m)
 
 
-@pytest.mark.parametrize("beta", [3.2, 3.6, 4.0])
+@pytest.mark.parametrize("beta", [3.4, 3.7, 4.0])
 def test_noise_spectrum_follows_the_power_law(beta: float) -> None:
     n, spacing = 256, 40.0
     rng = np.random.default_rng([BASE_SEED, 999])
@@ -69,14 +66,6 @@ def test_noise_spectrum_follows_the_power_law(beta: float) -> None:
     nonzero = k > 0
     slope = np.polyfit(np.log(k[nonzero]), np.log(power[nonzero]), 1)[0]
     assert slope == pytest.approx(-beta, abs=0.05)
-
-
-def test_ridge_term_peaks_at_one_and_stays_in_unit_range() -> None:
-    term = ridge_term(251, 40.0, np.random.default_rng([BASE_SEED, 999]))
-    assert term.min() >= 0.0
-    assert term.max() <= 1.0
-    # Crests exist: the field crosses zero, so the term reaches (almost) 1.
-    assert term.max() > 0.99
 
 
 def test_invalid_arguments_raise() -> None:

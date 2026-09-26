@@ -4,6 +4,6 @@ Synthetic terrain ids 0 to 59, 40 m grid, each id placed with its own class. Per
 
 | class | ids | placed | skipped | p10 | median | p90 | skipped ids |
 |---|---|---|---|---|---|---|---|
-| hilltop | 20 | 19 | 1 | 92.0 | 96.8 | 100.0 | 42 |
-| slope | 20 | 20 | 0 | 36.7 | 48.3 | 64.2 | none |
-| valley | 20 | 16 | 4 | 0.0 | 0.5 | 10.0 | 2, 26, 35, 56 |
+| hilltop | 20 | 14 | 6 | 87.4 | 93.2 | 97.5 | 0, 12, 15, 39, 42, 48 |
+| slope | 20 | 20 | 0 | 35.8 | 55.2 | 64.4 | none |
+| valley | 20 | 14 | 6 | 0.1 | 5.8 | 12.4 | 2, 26, 35, 41, 56, 59 |

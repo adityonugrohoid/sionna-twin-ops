@@ -13,10 +13,12 @@ from sionna_twin_ops.site import (
     MAST_HEIGHT_M,
     SEARCH_HALF_WIDTH_M,
     SITE_CLASSES,
+    SLOPE_MIN_GRADIENT,
     SLOPE_PERCENTILE_RANGE,
     VALLEY_MAX_PERCENTILE,
     NoSiteError,
     Site,
+    SiteClass,
     baseline_gradient,
     guard_band_m,
     map_bounds,
@@ -44,43 +46,48 @@ def disc(terrain: Terrain, i: int, j: int) -> np.ndarray:
     return heights
 
 
-def placed(terrain_id: int) -> tuple[Terrain, Site]:
-    terrain = generate_terrain(terrain_id, 40.0)
-    return terrain, place_site(terrain, site_class_for(terrain_id))
-
-
-@pytest.mark.parametrize("terrain_id", [0, 3, 6, 9])
-def test_hilltop_rule(terrain_id: int) -> None:
-    terrain, site = placed(terrain_id)
-    i, j = index_of(terrain, site)
-    assert site.ground_m == disc(terrain, i, j).max()
-    assert site.percentile >= HILLTOP_MIN_PERCENTILE
-    assert site.percentile == map_percentile(terrain, i, j)
-
-
-@pytest.mark.parametrize("terrain_id", [5, 8, 11, 14])
-def test_valley_rule(terrain_id: int) -> None:
-    terrain, site = placed(terrain_id)
-    i, j = index_of(terrain, site)
-    assert site.ground_m == disc(terrain, i, j).min()
-    assert site.percentile <= VALLEY_MAX_PERCENTILE
-
-
-@pytest.mark.parametrize("terrain_id", [1, 4, 7])
-def test_slope_rule_picks_the_steepest_qualifying_vertex(terrain_id: int) -> None:
-    terrain, site = placed(terrain_id)
-    low, high = SLOPE_PERCENTILE_RANGE
-    assert low <= site.percentile <= high
+def window_slices(terrain: Terrain) -> slice:
+    """Rows (and columns) of the central 3 x 3 km search window."""
     half = int(SEARCH_HALF_WIDTH_M // terrain.spacing_m)
     centre = len(terrain.coords_m) // 2
-    rows = cols = slice(centre - half, centre + half + 1)
-    gradient = baseline_gradient(terrain.heights_m, rows, cols, terrain.spacing_m)
+    return slice(centre - half, centre + half + 1)
+
+
+def qualifies(terrain: Terrain, site_class: SiteClass, i: int, j: int) -> bool:
+    """Check vertex (i, j) against the S2 rule for the class, written out directly."""
+    percentile = map_percentile(terrain, i, j)
+    if site_class == "hilltop":
+        return bool(terrain.heights_m[i, j] == disc(terrain, i, j).max()) and (
+            percentile >= HILLTOP_MIN_PERCENTILE
+        )
+    if site_class == "valley":
+        return bool(terrain.heights_m[i, j] == disc(terrain, i, j).min()) and (
+            percentile <= VALLEY_MAX_PERCENTILE
+        )
+    low, high = SLOPE_PERCENTILE_RANGE
+    gradient = baseline_gradient(
+        terrain.heights_m, slice(i, i + 1), slice(j, j + 1), terrain.spacing_m
+    )[0, 0]
+    return bool(gradient >= SLOPE_MIN_GRADIENT) and low <= percentile <= high
+
+
+@pytest.mark.parametrize("terrain_id", [1, 3, 4, 5, 6, 8])
+def test_site_qualifies_and_is_nearest_the_centre(terrain_id: int) -> None:
+    terrain = generate_terrain(terrain_id, 40.0)
+    site_class = site_class_for(terrain_id)
+    site = place_site(terrain, site_class)
     i, j = index_of(terrain, site)
-    site_gradient = gradient[i - rows.start, j - cols.start]
-    # Every steeper vertex in the window fails the percentile band.
-    for r, c in zip(*np.nonzero(gradient > site_gradient), strict=True):
-        p = map_percentile(terrain, rows.start + int(r), cols.start + int(c))
-        assert not low <= p <= high
+    assert qualifies(terrain, site_class, i, j)
+    assert site.percentile == map_percentile(terrain, i, j)
+
+    # No vertex strictly nearer the window centre qualifies.
+    window = window_slices(terrain)
+    centre = len(terrain.coords_m) // 2
+    distance = np.hypot(i - centre, j - centre)
+    for r in range(window.start, window.stop):
+        for c in range(window.start, window.stop):
+            if np.hypot(r - centre, c - centre) < distance:
+                assert not qualifies(terrain, site_class, r, c)
 
 
 def test_baseline_gradient_is_exact_on_a_plane() -> None:

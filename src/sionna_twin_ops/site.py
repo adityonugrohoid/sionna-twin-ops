@@ -24,6 +24,7 @@ GRADIENT_BASELINE_M = 200.0  # spec S2: slope gradient by central difference ove
 HILLTOP_MIN_PERCENTILE = 85.0  # spec S2
 VALLEY_MAX_PERCENTILE = 15.0  # spec S2
 SLOPE_PERCENTILE_RANGE = (35.0, 65.0)  # spec S2
+SLOPE_MIN_GRADIENT = 0.05  # ASSUMPTION (spec S2): m per m over the 200 m baseline
 MAP_CELLS = 128  # spec S3
 MAP_CELL_M = 40.0  # spec S3
 MAP_SIZE_M = MAP_CELLS * MAP_CELL_M
@@ -151,22 +152,23 @@ def baseline_gradient(
 
 
 def _ordered_candidates(terrain: Terrain, site_class: SiteClass) -> Iterator[tuple[int, int]]:
-    """Candidate vertices for a class, most preferred first, before the percentile test."""
+    """Candidate vertices for a class, nearest the window centre first, before the
+    percentile test. Equal distances keep row-major order, so the choice is deterministic."""
     half = int(SEARCH_HALF_WIDTH_M // terrain.spacing_m)
     centre = len(terrain.coords_m) // 2
     rows = cols = slice(centre - half, centre + half + 1)
     block = terrain.heights_m[rows, cols]
 
     if site_class == "slope":
-        key = -baseline_gradient(terrain.heights_m, rows, cols, terrain.spacing_m)
-        eligible = np.ones_like(block, dtype=bool)
+        gradient = baseline_gradient(terrain.heights_m, rows, cols, terrain.spacing_m)
+        eligible = gradient >= SLOPE_MIN_GRADIENT
     else:
         radius = round(DISC_RADIUS_M / terrain.spacing_m)
         disc_max, disc_min = disc_extremes(terrain.heights_m, rows, cols, radius)
-        if site_class == "hilltop":
-            eligible, key = block == disc_max, -block
-        else:
-            eligible, key = block == disc_min, block
+        eligible = block == (disc_max if site_class == "hilltop" else disc_min)
+
+    offsets = np.arange(-half, half + 1)
+    key = np.hypot(offsets[None, :], offsets[:, None])
 
     flat = np.flatnonzero(eligible.ravel())
     for index in flat[np.argsort(key.ravel()[flat], kind="stable")]:
@@ -188,10 +190,10 @@ def place_site(terrain: Terrain, site_class: SiteClass) -> Site:
     """Choose the site vertex by the rule for its class (spec S2).
 
     Candidates lie inside the central 3 x 3 km; percentiles are taken over the vertices
-    of the site's own map. Hilltop: the highest vertex that is the highest point of the
-    200 m disc around it, at percentile >= 85. Valley: the lowest vertex that is the
-    lowest point of its 200 m disc, at percentile <= 15. Slope: the vertex with the
-    largest gradient over a 200 m baseline among those at percentile 35 to 65.
+    of the site's own map (midrank). Hilltop: the highest point of the 200 m disc around
+    it, at percentile >= 85. Valley: the lowest point of its 200 m disc, at percentile
+    <= 15. Slope: gradient >= 0.05 over a 200 m baseline, at percentile 35 to 65. Among
+    the qualifiers, the one nearest the window centre is chosen.
 
     Args:
         terrain: Terrain to place the site on.
