@@ -26,7 +26,16 @@ from sionna_twin_ops.site import (
     place_site,
     site_class_for,
 )
-from sionna_twin_ops.solve import SolverSettings, precoding_vec, solve_map, specular_settings
+from sionna_twin_ops.solve import (
+    DATASET_SAMPLES,
+    DEV_SAMPLES,
+    MAX_SAMPLES_PER_TX,
+    REFERENCE_SAMPLES,
+    SolverSettings,
+    precoding_vec,
+    solve_map,
+    specular_settings,
+)
 from sionna_twin_ops.terrain import (
     GRID_SPACING_M,
     TILE_SIZE_M,
@@ -348,23 +357,27 @@ def surface_check(settings: SolverSettings, tilt_deg: float) -> SurfaceCheck:
 
 FLOOR_TERRAIN_IDS = (3, 1, 5)  # one hilltop, one slope, one valley
 FLOOR_TILT_DEG = 6.0
-FLOOR_SAMPLES = (10**7, 10**8, 10**9)
+CONTEXT_SAMPLES = 10**8  # the earlier 1e8 vs 1e9 floor, kept beside the dataset floor
+FLOOR_SAMPLES = (DEV_SAMPLES, CONTEXT_SAMPLES, DATASET_SAMPLES, REFERENCE_SAMPLES)
 
 
 @dataclass(frozen=True)
 class FloorRow:
-    """Time per map and the 1e8 vs 1e9 sampling floor on one terrain (spec N3).
+    """Time per map and the sampling floor on one terrain (spec N3).
 
     Attributes:
         terrain_id: Terrain id.
         site_class: Its site class.
         seconds: Wall time per map at each of FLOOR_SAMPLES.
-        floor: 1e8 against 1e9, over cells with power in both.
+        floor: DATASET_SAMPLES against REFERENCE_SAMPLES, over cells with power in both.
         floor_los: The same over line-of-sight cells.
         floor_nlos: The same over non-line-of-sight cells (reached by reflection).
-        no_hit: Share of cells with no ray at 1e8 and at 1e9.
-        hit_only_at_1e9: Cells with power at 1e9 but none at 1e8.
-        hit_only_at_1e8: Cells with power at 1e8 but none at 1e9.
+        context_los: CONTEXT_SAMPLES against DATASET_SAMPLES over line-of-sight cells.
+        context_nlos: The same over non-line-of-sight cells.
+        no_hit: Share of cells with no ray at the dataset and the reference sample count.
+        hit_only_at_reference: Cells with power at the reference count but none at the
+            dataset count.
+        hit_only_at_dataset: Cells with power at the dataset count but none at the reference.
     """
 
     terrain_id: int
@@ -373,13 +386,15 @@ class FloorRow:
     floor: DiffStats
     floor_los: DiffStats
     floor_nlos: DiffStats
+    context_los: DiffStats
+    context_nlos: DiffStats
     no_hit: tuple[float, float]
-    hit_only_at_1e9: int
-    hit_only_at_1e8: int
+    hit_only_at_reference: int
+    hit_only_at_dataset: int
 
 
 def sampling_floor(seed: int) -> list[FloorRow]:
-    """Solve each floor terrain at 1e7, 1e8 and 1e9 samples with the ruled settings.
+    """Solve each floor terrain at each of FLOOR_SAMPLES with the ruled settings.
 
     Args:
         seed: Solver seed (the ray lattice does not depend on it).
@@ -398,7 +413,9 @@ def sampling_floor(seed: int) -> list[FloorRow]:
             solve_map(scene, surface, weights, specular_settings(samples, seed))
             for samples in FLOOR_SAMPLES
         ]
-        g8, g9 = results[1].path_gain, results[2].path_gain
+        by_count = {n: r.path_gain for n, r in zip(FLOOR_SAMPLES, results, strict=True)}
+        g8, g9 = by_count[DATASET_SAMPLES], by_count[REFERENCE_SAMPLES]
+        context = by_count[CONTEXT_SAMPLES]
         los = los_mask(map_geometry(terrain, site))
         rows.append(
             FloorRow(
@@ -408,9 +425,11 @@ def sampling_floor(seed: int) -> list[FloorRow]:
                 floor=diff_stats(g8, g9),
                 floor_los=diff_stats_in(g8, g9, los),
                 floor_nlos=diff_stats_in(g8, g9, ~los),
+                context_los=diff_stats_in(context, g8, los),
+                context_nlos=diff_stats_in(context, g8, ~los),
                 no_hit=(float((g8 == 0).mean()), float((g9 == 0).mean())),
-                hit_only_at_1e9=int(((g8 == 0) & (g9 > 0)).sum()),
-                hit_only_at_1e8=int(((g8 > 0) & (g9 == 0)).sum()),
+                hit_only_at_reference=int(((g8 == 0) & (g9 > 0)).sum()),
+                hit_only_at_dataset=int(((g8 > 0) & (g9 == 0)).sum()),
             )
         )
     return rows
@@ -505,25 +524,51 @@ def solver_check_markdown(
         "## Time per map and the sampling floor (N3)",
         "",
         f"Terrains {', '.join(str(r.terrain_id) for r in floor_rows)}, azimuth "
-        f"{CHECK_AZIMUTH_DEG:.0f}, tilt {FLOOR_TILT_DEG:.0f}, the ruled settings "
-        "(line of sight and specular reflection, max_depth 3). The floor compares 1e8 with "
-        "1e9 samples over cells with power in both, overall and split by the LOS mask "
-        "(see `baselines.py`). Rays are launched on a fixed lattice, "
-        "so the seed does not change these maps; the sample count does.",
+        f"{CHECK_AZIMUTH_DEG:.0f}, tilt {FLOOR_TILT_DEG:.0f}, the ruled settings (line of "
+        "sight and specular reflection, max_depth 3), compared over cells with power in "
+        "both, overall and split by the LOS mask (see `baselines.py`).",
         "",
-        "| terrain | site | s/map 1e7 | s/map 1e8 | s/map 1e9 | floor median / p95 | "
-        "LOS median / p95 (cells) | NLOS median / p95 (cells) | no-hit 1e8 | no-hit 1e9 | "
-        "hit only at 1e9 | hit only at 1e8 |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|",
+        f"The floor compares the dataset's {DATASET_SAMPLES:.0e} rays with "
+        f"{REFERENCE_SAMPLES:.0e}. A larger reference is not possible: Mitsuba's sampler "
+        f"wavefront is 32-bit, so one solve launches at most {MAX_SAMPLES_PER_TX} rays, and "
+        "repeating solves adds nothing because the rays come from the same deterministic "
+        "lattice each time (the seed does not change these maps). A 4x step understates "
+        "the error against the fully converged map more than the earlier 10x step "
+        f"({CONTEXT_SAMPLES:.0e} vs {DATASET_SAMPLES:.0e}) did; that step is listed after "
+        "the main table as context. A lattice with a different ray count points its rays in "
+        "different directions rather than adding to the old ones, so a grazing cell reached "
+        "by a single ray at one count can be missed at another: that is why a cell or two "
+        "can have power at the smaller count only.",
+        "",
+        "| terrain | site | "
+        + " | ".join(f"s/map {n:.0e}" for n in FLOOR_SAMPLES)
+        + " | floor median / p95 | LOS median / p95 (cells) | NLOS median / p95 (cells) | "
+        f"no-hit {DATASET_SAMPLES:.0e} | no-hit {REFERENCE_SAMPLES:.0e} | "
+        f"hit only at {REFERENCE_SAMPLES:.0e} | hit only at {DATASET_SAMPLES:.0e} |",
+        "|" + "---|" * (2 + len(FLOOR_SAMPLES) + 7),
     ]
     for f in floor_rows:
-        s7, s8, s9 = f.seconds
+        seconds = " | ".join(f"{t:.2f}" for t in f.seconds)
         lines.append(
-            f"| {f.terrain_id} | {f.site_class} | {s7:.1f} | {s8:.1f} | {s9:.1f} | "
+            f"| {f.terrain_id} | {f.site_class} | {seconds} | "
             f"{f.floor.median_db:.3f} / {f.floor.p95_db:.3f} | "
             f"{f.floor_los.median_db:.3f} / {f.floor_los.p95_db:.3f} ({f.floor_los.cells}) | "
             f"{f.floor_nlos.median_db:.3f} / {f.floor_nlos.p95_db:.3f} ({f.floor_nlos.cells}) | "
-            f"{f.no_hit[0] * 100:.2f}% | {f.no_hit[1] * 100:.2f}% | {f.hit_only_at_1e9} | "
-            f"{f.hit_only_at_1e8} |"
+            f"{f.no_hit[0] * 100:.2f}% | {f.no_hit[1] * 100:.2f}% | {f.hit_only_at_reference} | "
+            f"{f.hit_only_at_dataset} |"
+        )
+    lines += [
+        "",
+        f"Context, {CONTEXT_SAMPLES:.0e} against {DATASET_SAMPLES:.0e}:",
+        "",
+        "| terrain | site | LOS median / p95 (cells) | NLOS median / p95 (cells) |",
+        "|---|---|---|---|",
+    ]
+    for f in floor_rows:
+        lines.append(
+            f"| {f.terrain_id} | {f.site_class} | "
+            f"{f.context_los.median_db:.3f} / {f.context_los.p95_db:.3f} ({f.context_los.cells}) | "
+            f"{f.context_nlos.median_db:.3f} / {f.context_nlos.p95_db:.3f} "
+            f"({f.context_nlos.cells}) |"
         )
     return "\n".join(lines) + "\n"

@@ -17,11 +17,12 @@ def test_commit_prefers_the_runner_pin(monkeypatch: pytest.MonkeyPatch) -> None:
     assert commit() == "abc123"
 
 
-def test_provenance_names_the_variant_and_the_gpu_state() -> None:
+def test_provenance_names_the_variant_and_the_gpu_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TWIN_COMMIT", "abc123")  # hermetic: no git checkout needed
     record = provenance()
     assert record["variant"] == DEFAULT_VARIANT
     assert record["gpu"]  # a GPU description, or an explicit "unknown: ..." statement
-    assert record["commit"]
+    assert record["commit"] == "abc123"
 
 
 def fake_run(path: Path, variant: str, scale: float) -> None:

@@ -71,12 +71,12 @@ def floor_maps(samples: list[int], seed: int, out: Path) -> dict[str, Any]:
             print(json.dumps(rows[-1]), flush=True)
     meta = {
         "provenance": provenance(),
-        "settings": specular_settings(0, seed).record() | {"samples_per_tx": samples},
+        "settings": specular_settings(samples[0], seed).record() | {"samples_per_tx": samples},
         "azimuth_deg": AZIMUTH_DEG,
         "tilt_deg": TILT_DEG,
         "rows": rows,
     }
-    (out / META).write_text(json.dumps(meta, indent=1))
+    (out / META).write_text(json.dumps(meta, indent=1), newline="\n")
     return meta
 
 
