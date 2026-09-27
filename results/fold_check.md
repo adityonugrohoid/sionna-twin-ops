@@ -4,7 +4,7 @@ Synthetic terrain ids 3, 6, 1, 4, 5, 8 (training terrains, two per site class), 
 
 | provenance | |
 |---|---|
-| commit | ee693dabdc173bfba648f155d977fb1e69b443a1 |
+| commit | 73018e685c42afe8cc4b833bf12ffb00e68ea51a |
 | variant | cuda_ad_mono_polarized |
 | platform | Windows-11-10.0.26200-SP0 |
 | python | 3.13.12 |
@@ -48,7 +48,7 @@ Distance is Euclidean, in cells (40 m), from a LOS cell to the nearest non-LOS c
 
 ## Fold term by dominant path
 
-A cell with power in the SW-NE map is reflection-dominated when its traced gain exceeds B0 (direct path and antenna pattern, no terrain) by 3 dB or more (ASSUMPTION), and direct-dominated otherwise. Median / p95 of the fold term, and the cells compared.
+A cell with power in the SW-NE map is reflection-dominated when its traced gain exceeds B0 (direct path and antenna pattern, no terrain) by 3 dB or more (ASSUMPTION), and direct-dominated otherwise. Median / p95 of the fold term, and the cells compared. B0 has no terrain, so shadowed cells rarely exceed it: the NLOS split says little, and nearly all NLOS cells fall under direct.
 
 | site class | LOS direct | LOS reflection | NLOS direct | NLOS reflection | LOS cells reflection-dominated |
 |---|---|---|---|---|---|
