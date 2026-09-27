@@ -154,14 +154,18 @@ def surrogate_search(dataset: Path, split: str, runs: list[Path], device: str) -
         device: "cuda" or "cpu", explicit.
 
     Returns:
-        {"seeds", "terrains", "objectives": {seed: {terrain: (8, 25, 10) list}},
-        "seconds": {seed: {terrain: s}}, "device"}.
+        {"commit", "torch", "platform", "gpu", "device", "seeds", "runs", "terrains",
+        "objectives": {seed: {terrain: (8, 25, 10) list}}, "seconds": {seed: {terrain: s}}}.
     """
+    import platform
+    from importlib.metadata import version
+
     import torch
 
     from sionna_twin_ops.evaluate import load_models
     from sionna_twin_ops.features import map_inputs, terrain_features
     from sionna_twin_ops.model import RESIDUAL_SCALE_DB
+    from sionna_twin_ops.provenance import commit, gpu
 
     torch_device = torch.device(device)
     sites = split_sites(dataset, split)
@@ -195,6 +199,10 @@ def surrogate_search(dataset: Path, split: str, runs: list[Path], device: str) -
             seconds[str(seed)][str(terrain_id)] = time.perf_counter() - start
             found[str(seed)][str(terrain_id)] = values.tolist()
     return {
+        "commit": commit(),
+        "torch": version("torch"),
+        "platform": platform.platform(),
+        "gpu": gpu(),
         "device": device,
         "seeds": [seed for seed, _ in models],
         "runs": [str(run) for run in runs],
