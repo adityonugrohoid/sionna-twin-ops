@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -112,3 +113,55 @@ def test_float16_storage_keeps_a_real_target_within_0_05_db() -> None:
     assert np.isfinite(stored).all()
     assert np.abs(stored).max() < np.finfo(np.float16).max
     assert np.array_equal(power.astype(np.float16).astype(np.float32), power)
+
+
+@pytest.mark.sionna
+def test_per_terrain_loader_equals_the_cache_all_loader(tmp_path: Path) -> None:
+    """The per-terrain feature loader (9e81212) must give the arrays the earlier
+    cache-every-terrain loader gave; the latter is rebuilt here as the reference."""
+    from sionna_twin_ops.antenna import tilt_weights
+    from sionna_twin_ops.scene import DATASET_FOLD, build_scene, measurement_surface
+    from sionna_twin_ops.solve import solve_map, specular_settings
+    from sionna_twin_ops.train import load_split
+
+    selection = select_terrains(20).terrains
+    entries = [e for e in selection if e.split == "train"][:3]
+    (tmp_path / "maps").mkdir()
+    lines: list[dict[str, Any]] = []
+    for entry in entries:
+        terrain = generate_terrain(entry.terrain_id, 40.0)
+        for azimuth, tilt in ((90.0, 6.0), (225.0, 0.0)):
+            scene = build_scene(terrain, entry.site, azimuth, DATASET_FOLD)
+            surface = measurement_surface(terrain, entry.site, DATASET_FOLD)
+            gain = solve_map(scene, surface, tilt_weights(tilt), specular_settings(10**5, 1))
+            name = map_name(entry.terrain_id, azimuth, tilt)
+            np.save(tmp_path / "maps" / name, gain.path_gain.astype(np.float32))
+            lines.append(
+                {
+                    "file": name,
+                    "terrain_id": entry.terrain_id,
+                    "split": "train",
+                    "site": entry.site.__dict__,
+                    "azimuth_deg": azimuth,
+                    "tilt_deg": tilt,
+                    "kind": "grid",
+                    "settings": {},
+                }
+            )
+    # Written in reverse so the loader's own sorting is exercised.
+    (tmp_path / MANIFEST).write_text("".join(json.dumps(line) + "\n" for line in lines[::-1]))
+
+    cache = {
+        e.terrain_id: terrain_features(generate_terrain(e.terrain_id, 40.0), e.site)
+        for e in entries
+    }
+    reference = sorted(lines, key=lambda line: line["file"])
+    for storage in (np.float32, np.float16):
+        loaded = load_split(tmp_path, "train", storage)
+        assert loaded.files == tuple(line["file"] for line in reference)
+        for i, line in enumerate(reference):
+            x, b0 = map_inputs(cache[line["terrain_id"]], line["azimuth_deg"], line["tilt_deg"])
+            residual, power = targets(np.load(tmp_path / "maps" / line["file"]), b0)
+            assert np.array_equal(loaded.inputs[i].numpy(), x.astype(storage))
+            assert np.array_equal(loaded.residual[i].numpy(), residual.astype(storage))
+            assert np.array_equal(loaded.power[i].numpy(), power.astype(storage))
