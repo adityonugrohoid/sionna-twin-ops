@@ -1,5 +1,7 @@
 # Tilt and power search on the test split
 
+> Superseded: a flawed definition, kept verbatim below. Its 3 km radius is beyond the map's 2.56 km half-width, so the objective rewards covering the whole map (spec Q0). Written by `twin search-report` at commit 5cade29. The search under the revised objective is in `search_test.md`.
+
 Synthetic terrain, not a real place; one sector, no vegetation, buildings or interference, flat Earth. Ray tracer: Sionna RT 2.1.0, cuda_ad_mono_polarized, 1e+09 rays, max depth 3, line of sight and specular reflection only, seed 1 (commit 1d2e070, NVIDIA GeForce RTX 4060 Laptop GPU, driver 616.56); pattern: 3GPP TR 38.901. Surrogate: runs/model-f6f13e3-v2/seed0, runs/model-f6f13e3-v2/seed1, runs/model-f6f13e3-v2/seed2 (best epochs; commit 9c5a628, torch 2.14.0). Written by `twin search-report`.
 
 Cases: 72 (terrains 52, 55, 58, 71, 72, 74, 77, 78, 81, 8 azimuths each). Variables: tilt and sector power. Objective Q1: covered cells within 3 km of the site (ASSUMPTION) minus 1 (ASSUMPTION) times covered cells beyond it; a cell is covered where RSRP reaches -110 dBm, with the sector power spread over 1200 resource elements (both ASSUMPTION, as in the evaluation). The map reaches 3.6 km at its corners, so the cells beyond 3 km are the outer ring and corners only.
