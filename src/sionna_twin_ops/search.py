@@ -662,6 +662,34 @@ def report_markdown(
     ]
     names = list(scores.shares)
     lines += [_share_row(name, list(scores.shares[name].values())) for name in names]
+    surrogate_names = [n for n in names if n.startswith("surrogate")]
+    worst_name, worst_case = min(
+        ((n, k) for n in surrogate_names for k in scores.shares[n]),
+        key=lambda nk: scores.shares[nk[0]][nk[1]],
+    )
+    short = {
+        k.split("/")[0]
+        for n in surrogate_names
+        for k, v in scores.shares[n].items()
+        if v < NEAR_OPTIMUM
+    }
+    rule_short = sorted(
+        {k.split("/")[0] for k, v in scores.shares["rule of thumb"].items() if v < NEAR_OPTIMUM},
+        key=int,
+    )
+    lines += [
+        "",
+        f"Lowest surrogate share: {scores.shares[worst_name][worst_case]:.4f} ({worst_name}, "
+        f"terrain {worst_case.split('/')[0]}, azimuth {worst_case.split('/')[1]} deg). "
+        + (
+            "No surrogate choice falls below 99% of the optimum on any terrain."
+            if not short
+            else "Surrogate choices fall below 99% on terrains "
+            f"{', '.join(sorted(short, key=int))}."
+        )
+        + f" The rule of thumb falls below 99% on terrains {', '.join(rule_short)}; its lowest "
+        f"share is {min(scores.shares['rule of thumb'].values()):.4f}.",
+    ]
     optimum_powers = [p for _, p, _ in scores.optimum.values()]
     optimum_tilts = [t for t, _, _ in scores.optimum.values()]
     lines += [
