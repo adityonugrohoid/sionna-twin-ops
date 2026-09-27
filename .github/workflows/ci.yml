@@ -1,0 +1,35 @@
+# Lint, type check and test on every push to main and every pull request.
+# No GPU, no Windows runner and no dataset here: tests that need them are not in the suite.
+# Actions are pinned to commit SHAs (the tag is in the comment).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.10.2"
+          # No cache: the locked torch wheels make it 2.9 GB of the repo's cache quota.
+          # Measured: restore 48 s plus sync 3 s, against a cold install of 34 to 62 s,
+          # and saving it after every lock change costs another 48 s.
+          enable-cache: false
+      - run: uv sync --locked
+      - run: uv run ruff check src tests
+      - run: uv run ruff format --check src tests
+      - run: uv run mypy
+      - run: uv run pytest -q -rs
