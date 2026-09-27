@@ -670,6 +670,77 @@ def edge_counts(scores: Scores) -> dict[str, int]:
     return counts
 
 
+EDGE_READINGS = {
+    "tilt low": "wants uptilt the box does not allow (the ground rises around the site)",
+    "tilt high": "wants more downtilt than the box allows (the ground falls away)",
+    "power high": "wants more power than the sector maximum",
+    "power low": "wants less power than the box's floor",
+}
+
+
+def edge_table(scores: Scores, site_classes: dict[str, str]) -> list[str]:
+    """Optima on the feasible box's edges, per site class, with a reading of each edge.
+
+    Args:
+        scores: Output of `score`.
+        site_classes: Site class per terrain.
+
+    Returns:
+        Markdown lines: a table, then one reading line per edge that binds.
+    """
+    edges = {
+        "tilt low": f"tilt {TRACE_TILTS_DEG[0]:g} deg",
+        "tilt high": f"tilt {TRACE_TILTS_DEG[-1]:g} deg",
+        "power low": f"power {POWERS_DBM[0]:g} dBm",
+        "power high": f"power {POWERS_DBM[-1]:g} dBm",
+    }
+
+    def on_edge(key: str, tilt: float, power: float) -> bool:
+        return {
+            "tilt low": tilt == TRACE_TILTS_DEG[0],
+            "tilt high": tilt == TRACE_TILTS_DEG[-1],
+            "power low": power == POWERS_DBM[0],
+            "power high": power == POWERS_DBM[-1],
+        }[key]
+
+    classes = sorted(set(site_classes.values()))
+    counts: dict[str, dict[str, int]] = {
+        c: dict.fromkeys([*edges, "any", "cases"], 0) for c in classes
+    }
+    for case, (tilt, power, _) in scores.optimum.items():
+        row = counts[site_classes[case.split("/")[0]]]
+        row["cases"] += 1
+        hits = [key for key in edges if on_edge(key, tilt, power)]
+        for key in hits:
+            row[key] += 1
+        row["any"] += int(bool(hits))
+    lines = [
+        "| site class | cases | " + " | ".join(edges.values()) + " | any edge |",
+        "|---|---|" + "---|" * (len(edges) + 1),
+    ]
+    for c in classes:
+        row = counts[c]
+        lines.append(
+            f"| {c} | {row['cases']} | "
+            + " | ".join(str(row[k]) for k in edges)
+            + f" | {row['any']} |"
+        )
+    lines.append("")
+    for c in classes:
+        binding = [k for k in edges if counts[c][k] > 0]
+        if binding:
+            lines.append(
+                f"- {c}: "
+                + "; ".join(
+                    f"{counts[c][k]} of {counts[c]['cases']} at {edges[k]} "
+                    f"(reading: {EDGE_READINGS[k]})"
+                    for k in sorted(binding, key=lambda k: -counts[c][k])
+                )
+                + "."
+            )
+    return lines
+
+
 def objective_section(
     scores: Scores, plan: dict[str, Any], terrains: list[str], site_classes: dict[str, str]
 ) -> list[str]:
@@ -686,7 +757,9 @@ def objective_section(
     """
     radius_m = plan["radius_m"]
     cases = len(scores.optimum)
-    names = list(scores.shortfalls)
+    all_names = list(scores.shortfalls)
+    names = [n for n in all_names if not n.endswith("(GPU)")]
+    gpu_names = [n for n in all_names if n.endswith("(GPU)")]
     inside = sorted({c[0] for c in scores.cells.values()})
     outside = sorted({c[1] for c in scores.cells.values()})
     lines = [f"## Objective with a {radius_m / 1000:g} km service radius", ""]
@@ -711,6 +784,21 @@ def objective_section(
         "|---|---|---|---|---|",
     ]
     lines += [_shortfall_row(name, list(scores.shortfalls[name].values())) for name in names]
+    differ = sum(
+        plan["choices"]["cases"][seed][case] != plan["gpu_choices"]["cases"][seed][case]
+        for seed in plan["choices"]["cases"]
+        for case in plan["choices"]["cases"][seed]
+    )
+    total = sum(len(v) for v in plan["choices"]["cases"].values())
+    lines += [
+        "",
+        f"The GPU pass's choices differ from the CPU pass's in {differ} of {total} (seed, case) "
+        "pairs; scored with the ray tracer they give:",
+        "",
+        "| chooser | median shortfall | p90 | max | within 1 point |",
+        "|---|---|---|---|---|",
+    ]
+    lines += [_shortfall_row(name, list(scores.shortfalls[name].values())) for name in gpu_names]
     surrogate_names = [n for n in names if n.startswith("surrogate")]
     worst_name, worst_case = max(
         ((n, k) for n in surrogate_names for k in scores.shortfalls[n]),
@@ -742,10 +830,13 @@ def objective_section(
     edges = edge_counts(scores)
     lines += [
         "",
-        "Optima on an edge of the grid (the true optimum may lie beyond it): "
-        + ", ".join(f"{name} {n}" for name, n in edges.items())
-        + f", of {cases}. Tilt stays within 0 to 12 deg, the surrogate's training range "
-        "(limitation).",
+        "#### Optima on the edge of the feasible box",
+        "",
+        "The box (tilt 0 to 12 deg, power 28 to 46 dBm, ASSUMPTION, spec Q0c) is the feasible "
+        "set, so an optimum on its edge is a constrained optimum, not a search artefact. "
+        f"On an edge: {edges['any edge']} of {cases}. Per site class:",
+        "",
+        *edge_table(scores, site_classes),
         "",
         "#### By terrain",
         "",
@@ -767,7 +858,7 @@ def objective_section(
             + " | ".join(cells)
             + " |"
         )
-    whole_names = list(scores.whole_shortfalls)
+    whole_names = [n for n in scores.whole_shortfalls if not n.endswith("(GPU)")]
     lines += [
         "",
         "### One choice per terrain over azimuth, tilt and power",
@@ -797,22 +888,65 @@ def objective_section(
     return [*lines, ""]
 
 
+def first_objective_section(first_report: Path) -> list[str]:
+    """The first objective's test results, quoted from its committed report and marked flawed.
+
+    Args:
+        first_report: The first run's report (results/search_test_first_objective.md).
+
+    Returns:
+        Markdown lines.
+
+    Raises:
+        ValueError: If the report lacks its primary table.
+    """
+    text = first_report.read_text().splitlines()
+    start = text.index("## Primary: per (terrain, azimuth), 72 cases")
+    table = []
+    for line in text[start:]:
+        if line.startswith("|"):
+            table.append(line)
+        elif table:
+            break
+    optimum = [line for line in text if line.startswith("The ray tracer's optimum uses")]
+    if not table or len(optimum) != 1:
+        raise ValueError(f"{first_report} lacks its primary table")
+    return [
+        f"## First objective, {FIRST_RADIUS_M / 1000:g} km radius: a flawed definition",
+        "",
+        f"The first definition (covered cells within {FIRST_RADIUS_M / 1000:g} km minus covered "
+        f"cells beyond, raw counts, power 37 to 46 dBm, share of the optimum) is flawed: its "
+        f"radius is beyond the map's half-width ({MAP_SIZE_M / 2000:g} km), so only the corners "
+        "lie outside it, there is almost no spill to avoid, and the objective rewards covering "
+        "the whole map. A fixed setting then nearly ties any search. It was run once on this "
+        f"split; its report is kept verbatim in `{first_report.name}`. Its primary table, quoted:",
+        "",
+        *table,
+        "",
+        optimum[0],
+        "",
+    ]
+
+
 def report_markdown(
     split: str,
-    sections: list[tuple[Scores, dict[str, Any]]],
+    scores: Scores,
+    plan: dict[str, Any],
+    first_objective: list[str],
     surrogate: dict[str, dict[str, Any]],
     trace_meta: dict[str, Any],
     agreement: tuple[int, int, float],
     cpu_seconds: tuple[float, float],
     site_classes: dict[str, str],
 ) -> str:
-    """The search report (spec rule Q): one section per objective, then time and a check.
+    """The search report (spec rules Q, Q0b, Q0c): the objective, time and a check.
 
     Args:
         split: The split searched.
-        sections: (scores, plan) per objective, in report order.
-        surrogate: {"cpu": record, "cuda": record} of `surrogate_search` for the timing (the
-            last objective's).
+        scores: Output of `score` under the plan.
+        plan: plan.json of `twin search-surrogate`.
+        first_objective: Lines of `first_objective_section` (test), or none (validation).
+        surrogate: {"cpu": record, "cuda": record} of `surrogate_search` (the timing).
         trace_meta: meta.json of the timed `trace_search`.
         agreement: Output of `dataset_agreement`.
         cpu_seconds: Output of `cpu_raytracer_seconds`.
@@ -825,7 +959,14 @@ def report_markdown(
     origin = trace_meta["provenance"]
     terrains = list(trace_meta["sites"])
     cases = len(AZIMUTHS_DEG) * len(terrains)
-    agree = [plan["gpu_choices_agree"] for _, plan in sections]
+    design = (
+        "The objective was designed on the validation split (`results/search_validation.md`, "
+        "spec Q0, Q0b, Q0c) and this split was then searched once."
+        if split == "test"
+        else "This split was used to design the objective (spec Q0, Q0b, Q0c): the first "
+        "definition's flaw, the area normalisation and the feasible box were settled on it "
+        "before the test split was searched."
+    )
     lines = [
         f"# Tilt and power search on the {split} split",
         "",
@@ -835,27 +976,26 @@ def report_markdown(
         f"max depth {settings['max_depth']}, line of sight and specular reflection only, seed "
         f"{settings['seed']} (grid maps at commit {origin['commit'][:7]}, {origin['gpu']}); "
         f"pattern: 3GPP TR 38.901. Surrogate: {', '.join(surrogate['cpu']['runs'])} (best "
-        f"epochs; torch {surrogate['cpu']['torch']}; search commits "
-        f"{', '.join(sorted({plan['commit'][:7] for _, plan in sections}))}). Written by "
-        "`twin search-report`.",
+        f"epochs; torch {surrogate['cpu']['torch']}; search commit {plan['commit'][:7]}). "
+        "Written by `twin search-report`.",
+        "",
+        design,
         "",
         f"Cases: {cases} (terrains {', '.join(terrains)}, {len(AZIMUTHS_DEG)} azimuths each). "
-        "Variables: tilt and sector power. Objective Q0b: covered fraction within a service "
-        f"radius minus {SPILL_WEIGHT:g} (ASSUMPTION) times covered fraction beyond it, within "
-        f"the map ({MAP_SIZE_M / 1000:.2f} km square, centred on the site); a cell is covered "
-        "where RSRP "
-        f"reaches {RSRP_THRESHOLD_DBM:.0f} dBm, with the sector power spread over "
-        f"{RESOURCE_ELEMENTS} resource elements (both ASSUMPTION, as in the evaluation).",
+        "Variables: electrical tilt and sector power, within the feasible box: tilt "
+        f"{TRACE_TILTS_DEG[0]:g} to {TRACE_TILTS_DEG[-1]:g} deg, power {POWERS_DBM[0]:g} to "
+        f"{POWERS_DBM[-1]:g} dBm, {POWERS_DBM[-1]:g} dBm being the sector maximum (both "
+        "ASSUMPTION, spec Q0c). A cell is covered where RSRP reaches "
+        f"{RSRP_THRESHOLD_DBM:.0f} dBm, with the sector power spread over {RESOURCE_ELEMENTS} "
+        "resource elements (both ASSUMPTION, as in the evaluation).",
         "",
         "Choosers:",
-        f"- Ray tracer: tilt 0 to 12 deg in 1 deg ({len(TRACE_TILTS_DEG)} traces per case), power "
-        f"{POWERS_DBM[0]:.0f} to {POWERS_DBM[-1]:.0f} dBm in 1 dB (post-processing). Its best "
-        "setting is the optimum every shortfall is taken from.",
-        f"- Surrogate: tilt 0 to 12 deg in 0.5 deg ({len(SURROGATE_TILTS_DEG)} inferences per "
-        "case), the same powers; covered cells need the power head to say power. Choices come "
-        "from the CPU pass; the GPU pass in float32 breaks some near-ties the other way "
-        f"(choices agree, per objective: {', '.join(str(a) for a in agree)}), so its choices "
-        "are scored too.",
+        f"- Ray tracer: tilt in 1 deg ({len(TRACE_TILTS_DEG)} traces per case), power in 1 dB "
+        "(post-processing). Its best setting is the optimum every shortfall is taken from.",
+        f"- Surrogate: tilt in 0.5 deg ({len(SURROGATE_TILTS_DEG)} inferences per case), the "
+        "same powers; covered cells need the power head to say power. Choices come from the "
+        "CPU pass; the GPU pass in float32 breaks some near-ties the other way, so its choices "
+        "are scored too and reported separately.",
         "- Rule of thumb: tilt = arctan(30 m / radius) + half the column's vertical half-power "
         "beamwidth (from the TR 38.901 element times the 8 x 1 array factor), at "
         f"{RULE_POWER_DBM:.0f} dBm.",
@@ -865,9 +1005,9 @@ def report_markdown(
         "(half-degree tilts, the rule's tilt) were traced for the purpose. Ties go to the lower "
         "azimuth, then the lower tilt, then the lower power.",
         "",
+        *objective_section(scores, plan, terrains, site_classes),
+        *first_objective,
     ]
-    for scores, plan in sections:
-        lines += objective_section(scores, plan, terrains, site_classes)
 
     gpu_s = [s for per in surrogate["cuda"]["seconds"].values() for s in per.values()]
     cpu_s = [s for per in surrogate["cpu"]["seconds"].values() for s in per.values()]

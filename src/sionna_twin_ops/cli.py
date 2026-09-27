@@ -250,40 +250,43 @@ def search_surrogate_command(args: argparse.Namespace) -> None:
 def search_report_command(args: argparse.Namespace) -> None:
     """Run `twin search-report`: score every chooser with the ray tracer, write report and figure.
 
-    One section per surrogate directory (one objective each), in the order given; the
-    figure and the surrogate timing come from the last.
-
     Args:
         args: Parsed arguments of the search-report command.
 
     Raises:
-        ValueError: If a plan is for another split.
+        ValueError: If the plan is for another split, or the first objective's report is
+            missing for the test split or given for another split.
     """
     from sionna_twin_ops import search
 
     trace_meta = json.loads((args.trace_dirs[0] / search.META).read_text())
-    sections = []
-    for surrogate_dir in args.surrogate_dirs:
-        plan = json.loads((surrogate_dir / "plan.json").read_text())
-        if plan["split"] != args.split:
-            raise ValueError(f"{surrogate_dir} holds a {plan['split']} plan, not {args.split}")
-        sections.append((search.score(args.trace_dirs, plan), plan))
-    last = args.surrogate_dirs[-1]
+    plan = json.loads((args.surrogate_dir / "plan.json").read_text())
+    if plan["split"] != args.split:
+        raise ValueError(f"{args.surrogate_dir} holds a {plan['split']} plan, not {args.split}")
+    if (args.split == "test") != (args.first_objective_report is not None):
+        raise ValueError("--first-objective-report is required for test and only for test")
+    first = (
+        search.first_objective_section(args.first_objective_report)
+        if args.first_objective_report is not None
+        else []
+    )
+    scores = search.score(args.trace_dirs, plan)
     surrogate = {
-        device: json.loads((last / f"surrogate_{device}.json").read_text())
+        device: json.loads((args.surrogate_dir / f"surrogate_{device}.json").read_text())
         for device in ("cpu", "cuda")
     }
     classes = {t: site["site_class"] for t, site in trace_meta["sites"].items()}
     report = search.report_markdown(
         args.split,
-        sections,
+        scores,
+        plan,
+        first,
         surrogate,
         trace_meta,
         search.dataset_agreement(args.trace_dirs[0], args.dataset),
         search.cpu_raytracer_seconds(args.evaluation_report),
         classes,
     )
-    scores, plan = sections[-1]
     settings, origin = trace_meta["settings"], trace_meta["provenance"]
     caption = (
         f"Synthetic terrain, {args.split} split, {len(scores.optimum)} cases. Ray tracer: Sionna "
@@ -478,11 +481,12 @@ def main(argv: list[str] | None = None) -> int:
     s_rep.add_argument("--dataset", type=Path, required=True, help="dataset directory")
     s_rep.add_argument("--split", choices=("validation", "test"), required=True, help="split")
     s_rep.add_argument(
-        "--surrogate-dirs",
+        "--surrogate-dir", type=Path, required=True, help="output of search-surrogate"
+    )
+    s_rep.add_argument(
+        "--first-objective-report",
         type=Path,
-        nargs="+",
-        required=True,
-        help="outputs of search-surrogate, one per objective, in report order",
+        help="test only (required there): the first objective's report, quoted as flawed",
     )
     s_rep.add_argument(
         "--trace-dirs",
