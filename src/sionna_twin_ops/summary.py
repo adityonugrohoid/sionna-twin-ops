@@ -36,6 +36,7 @@ def summary_markdown(results: Path) -> str:
         Markdown.
     """
     ev = read_report(results / "evaluation_test.md")
+    fold = read_report(results / "fold_check.md")
     solver = read_report(results / "solver_check.md")
     backend = read_report(results / "backend_check.md")
     dataset = read_report(results / "dataset_summary.md")
@@ -79,6 +80,11 @@ def summary_markdown(results: Path) -> str:
             f"| {stratum} | {_spread([s[0] for s in row['surrogate']], 3)} | "
             f"{row['baselines']['B0'][0]:.3f} | {row['baselines']['B1'][0]:.3f} | {truth} |"
         )
+    lines += [
+        "",
+        "The sampling floor is measured split LOS / NLOS only, so both LOS rows show the "
+        "LOS floor.",
+    ]
     reflection = _stratum(block, "LOS reflection")
     off_grid = _stratum(ev["blocks"]["off-grid"], "all")
     accuracy = [
@@ -188,8 +194,10 @@ def summary_markdown(results: Path) -> str:
         "scattering. Shadowed cells are lit by reflections alone.",
         "- The ground truth depends on how each map cell is folded into triangles: the fold "
         "term is far above the sampling floor, largest in LOS reflection-dominated and NLOS "
-        f"cells ({_link('fold_check')}). Surrogate errors below it are not a claim of "
-        "accuracy beyond the ray tracer's own.",
+        f"cells ({_link('fold_check')}). It is quoted from {len(fold['terrain_ids'])} "
+        f"training terrains at one azimuth and tilt (azimuth {fold['azimuth_deg']:.0f} deg, "
+        f"tilt {fold['tilt_deg']:.0f} deg), not measured on the test split. Surrogate errors "
+        "below it are not a claim of accuracy beyond the ray tracer's own.",
         f"- The surrogate {direction} LOS reflection-dominated cells (bias above); its "
         f"largest mean errors are in {ranked[0]} and {ranked[1]} cells, its smallest in "
         f"{ranked[2]} cells (table above).",
@@ -201,6 +209,11 @@ def summary_markdown(results: Path) -> str:
         "- The search objective is not smooth in tilt, so the 1 deg ray-tracer grid is a "
         "reference at that resolution; a half-degree setting can beat it "
         f"({_link('search_test')}).",
+        "- The search objective was revised twice on the validation split before the final "
+        "objective's single test run: first because its radius reached beyond the map, then "
+        "because raw cell counts let the larger spill region outweigh the service area; the "
+        f"final objective compares area fractions ({_link('search_validation')}). The first "
+        "definition had already run once on test (next item).",
         "- The first search objective was a flawed definition: its 3 km radius reached "
         "beyond the map's half-width, so its optimum collapsed to 46 dBm and 0 deg; it is "
         "kept as superseded ([search_test_first_objective](search_test_first_objective.md)).",

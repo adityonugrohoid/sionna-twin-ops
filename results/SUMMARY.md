@@ -13,6 +13,8 @@ Test split: 414 maps on 9 terrains no model saw in training. Mean absolute path-
 | LOS reflection | 4.084 (3.968 to 4.200) | 8.410 | 8.610 | 1.715 / 13.241 | 0.006 / 0.100 |
 | NLOS | 3.856 (3.793 to 3.907) | 10.207 | 9.857 | 1.725 / 9.905 | 0.019 / 0.667 |
 
+The sampling floor is measured split LOS / NLOS only, so both LOS rows show the LOS floor.
+
 - LOS reflection-dominated cells: bias -3.017 (-3.271 to -2.804) dB, the surrogate underpredicts them.
 - Off-grid tilts (1.5, 4.5, 7.5 deg, never trained on): mean abs 1.336 (1.312 to 1.371) dB.
 - No-signal cells: the power head's accuracy over all cells is 98.36 (98.31 to 98.39)%.
@@ -53,9 +55,10 @@ Ray tracer time over surrogate time, medians ([evaluation_test](evaluation_test.
 - Synthetic terrain only: procedural heightmaps from seeds, one ground material, no vegetation, buildings or clutter, flat Earth.
 - One sector, one antenna configuration, one carrier.
 - The ray tracer runs line of sight and specular reflection only: no diffraction (it does not reach a mesh measurement surface in Sionna RT) and no diffuse scattering. Shadowed cells are lit by reflections alone.
-- The ground truth depends on how each map cell is folded into triangles: the fold term is far above the sampling floor, largest in LOS reflection-dominated and NLOS cells ([fold_check](fold_check.md)). Surrogate errors below it are not a claim of accuracy beyond the ray tracer's own.
+- The ground truth depends on how each map cell is folded into triangles: the fold term is far above the sampling floor, largest in LOS reflection-dominated and NLOS cells ([fold_check](fold_check.md)). It is quoted from 6 training terrains at one azimuth and tilt (azimuth 90 deg, tilt 6 deg), not measured on the test split. Surrogate errors below it are not a claim of accuracy beyond the ray tracer's own.
 - The surrogate underpredicts LOS reflection-dominated cells (bias above); its largest mean errors are in LOS reflection and NLOS cells, its smallest in LOS direct cells (table above).
 - Training overfits after the best epoch; the saved weights are the best epoch's, chosen on validation ([training_summary](training_summary.md)).
 - Search optima often sit on the edge of the feasible box (tilt 0 to 12 deg, 28 to 46 dBm, ASSUMPTION): they are constrained optima, not the unconstrained ones ([search_test](search_test.md)).
 - The search objective is not smooth in tilt, so the 1 deg ray-tracer grid is a reference at that resolution; a half-degree setting can beat it ([search_test](search_test.md)).
+- The search objective was revised twice on the validation split before the final objective's single test run: first because its radius reached beyond the map, then because raw cell counts let the larger spill region outweigh the service area; the final objective compares area fractions ([search_validation](search_validation.md)). The first definition had already run once on test (next item).
 - The first search objective was a flawed definition: its 3 km radius reached beyond the map's half-width, so its optimum collapsed to 46 dBm and 0 deg; it is kept as superseded ([search_test_first_objective](search_test_first_objective.md)).
