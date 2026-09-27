@@ -79,13 +79,17 @@ def load_split(dataset: Path, split: str, storage: type[np.floating[Any]]) -> Sp
     inputs = np.empty((n, INPUT_CHANNELS, 128, 128), dtype=storage)
     residuals = np.empty((n, 128, 128), dtype=storage)
     powers = np.empty((n, 128, 128), dtype=storage)
-    cache: dict[int, Any] = {}
+    # Maps are sorted by file name, so each terrain's maps are contiguous: only the current
+    # terrain's features are held (each holds its profiles, about 67 MB).
+    current_id, features = -1, None
     for index, line in enumerate(lines):
-        terrain_id = line["terrain_id"]
-        if terrain_id not in cache:
-            terrain = generate_terrain(terrain_id, GRID_SPACING_M)
-            cache[terrain_id] = terrain_features(terrain, Site(**line["site"]))
-        x, b0 = map_inputs(cache[terrain_id], line["azimuth_deg"], line["tilt_deg"])
+        if line["terrain_id"] != current_id:
+            current_id = line["terrain_id"]
+            terrain = generate_terrain(current_id, GRID_SPACING_M)
+            features = terrain_features(terrain, Site(**line["site"]))
+        if features is None:
+            raise RuntimeError(f"no features built for {line['file']}")
+        x, b0 = map_inputs(features, line["azimuth_deg"], line["tilt_deg"])
         residual, power = targets(np.load(dataset / "maps" / line["file"]), b0)
         inputs[index], residuals[index], powers[index] = x, residual, power
     return SplitData(
