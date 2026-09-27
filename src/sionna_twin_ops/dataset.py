@@ -173,7 +173,7 @@ def sweep(
     """
     from sionna_twin_ops.antenna import tilt_weights
     from sionna_twin_ops.provenance import provenance
-    from sionna_twin_ops.scene import build_scene, measurement_surface
+    from sionna_twin_ops.scene import DATASET_FOLD, build_scene, measurement_surface
     from sionna_twin_ops.solve import solve_map, specular_settings
 
     settings = specular_settings(samples_per_tx, seed)
@@ -200,9 +200,9 @@ def sweep(
             if not todo:
                 continue
             terrain = generate_terrain(entry.terrain_id, GRID_SPACING_M)
-            surface = measurement_surface(terrain, entry.site)
+            surface = measurement_surface(terrain, entry.site, DATASET_FOLD)
             for azimuth in sorted({a for a, _, _ in todo}):
-                scene = build_scene(terrain, entry.site, azimuth)
+                scene = build_scene(terrain, entry.site, azimuth, DATASET_FOLD)
                 for _, tilt, kind in (c for c in todo if c[0] == azimuth):
                     result = solve_map(scene, surface, tilt_weights(tilt), settings)
                     name = map_name(entry.terrain_id, azimuth, tilt)
