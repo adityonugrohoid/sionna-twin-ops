@@ -15,6 +15,7 @@ from sionna_twin_ops.dataset import (
     map_name,
     read_manifest,
     select_terrains,
+    selection_for,
     summary_markdown,
     sweep,
 )
@@ -88,7 +89,7 @@ def test_sweep_resumes_and_refuses_mixed_settings(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="made with"):
         sweep(tmp_path, (entry,), 2 * 10**5, 1)
 
-    report = summary_markdown(tmp_path)
+    report = summary_markdown(tmp_path, "v1")
     assert "Maps in the manifest: 40 of 2454 expected; 2414 not yet traced." in report
 
     (tmp_path / "maps" / lines[0]["file"]).unlink()
@@ -106,4 +107,21 @@ def test_summary_refuses_mixed_settings(tmp_path: Path) -> None:
     other = dict(line, file=map_name(1, 0.0, 3.0), settings={"samples_per_tx": 2})
     (tmp_path / MANIFEST).write_text(json.dumps(line) + "\n" + json.dumps(other) + "\n")
     with pytest.raises(ValueError, match="mixes"):
-        summary_markdown(tmp_path)
+        summary_markdown(tmp_path, "v1")
+
+
+def test_v2_adds_28_training_terrains_per_class_after_the_v1_walk() -> None:
+    v1 = selection_for("v1")
+    v2 = selection_for("v2")
+    new = [e for e in v2.terrains if e not in v1.terrains]
+    assert len(new) == 84
+    assert all(e.split == "train" for e in new)
+    counts = Counter(e.site.site_class for e in new)
+    assert counts == {c: 28 for c in SITE_CLASSES}
+    last_v1 = max([e.terrain_id for e in v1.terrains] + [i for i, _ in v1.skipped])
+    assert min(e.terrain_id for e in new) > last_v1
+    assert set(v1.terrains) <= set(v2.terrains)
+    assert [e for e in v2.terrains if e.split != "train"] == [
+        e for e in v1.terrains if e.split != "train"
+    ]
+    assert set(v1.skipped) <= set(v2.skipped)

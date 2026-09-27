@@ -9,6 +9,7 @@ loaded; the best epoch is chosen on validation. Synthetic terrain.
 import hashlib
 import json
 import platform
+import resource
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,12 +21,15 @@ from torch import Tensor, nn
 
 from sionna_twin_ops.augment import SIN_CHANNEL, VARIANTS
 from sionna_twin_ops.dataset import read_manifest
-from sionna_twin_ops.features import map_inputs, targets, terrain_features
+from sionna_twin_ops.features import INPUT_CHANNELS, map_inputs, targets, terrain_features
 from sionna_twin_ops.model import RESIDUAL_SCALE_DB, UNet, parameter_count
 from sionna_twin_ops.site import Site
 from sionna_twin_ops.terrain import GRID_SPACING_M, generate_terrain
 
 LOS_CHANNEL = 5  # features.py
+# ASSUMPTION (as in `twin fold-check`): a cell whose traced gain exceeds B0 by this much is
+# reflection-dominated. The residual target is traced minus B0, so the test is on it.
+REFLECTION_EXCESS_DB = 3.0
 POWER_LOSS_WEIGHT = 1.0  # ASSUMPTION: total = L1(dB) / RESIDUAL_SCALE_DB + weight * BCE
 BATCH_SIZE = 16
 LEARNING_RATE = 1e-3
@@ -49,12 +53,14 @@ class SplitData:
     files: tuple[str, ...]
 
 
-def load_split(dataset: Path, split: str) -> SplitData:
+def load_split(dataset: Path, split: str, storage: type[np.floating[Any]]) -> SplitData:
     """Build the tensors of one split from a dataset directory.
 
     Args:
         dataset: Dataset directory (manifest.jsonl and maps/).
         split: "train", "validation" or "test".
+        storage: Array dtype the split is held in (np.float16 or np.float32); batches are
+            cast to float32 before use.
 
     Returns:
         The split.
@@ -68,22 +74,28 @@ def load_split(dataset: Path, split: str) -> SplitData:
     )
     if not lines:
         raise ValueError(f"no {split} maps in {dataset}")
-    cache: dict[int, Any] = {}
-    inputs, residuals, powers = [], [], []
-    for line in lines:
-        terrain_id = line["terrain_id"]
-        if terrain_id not in cache:
-            terrain = generate_terrain(terrain_id, GRID_SPACING_M)
-            cache[terrain_id] = terrain_features(terrain, Site(**line["site"]))
-        x, b0 = map_inputs(cache[terrain_id], line["azimuth_deg"], line["tilt_deg"])
+    # Preallocated: stacking lists would briefly hold every map twice.
+    n = len(lines)
+    inputs = np.empty((n, INPUT_CHANNELS, 128, 128), dtype=storage)
+    residuals = np.empty((n, 128, 128), dtype=storage)
+    powers = np.empty((n, 128, 128), dtype=storage)
+    # Maps are sorted by file name, so each terrain's maps are contiguous: only the current
+    # terrain's features are held (each holds its profiles, about 67 MB).
+    current_id, features = -1, None
+    for index, line in enumerate(lines):
+        if line["terrain_id"] != current_id:
+            current_id = line["terrain_id"]
+            terrain = generate_terrain(current_id, GRID_SPACING_M)
+            features = terrain_features(terrain, Site(**line["site"]))
+        if features is None:
+            raise RuntimeError(f"no features built for {line['file']}")
+        x, b0 = map_inputs(features, line["azimuth_deg"], line["tilt_deg"])
         residual, power = targets(np.load(dataset / "maps" / line["file"]), b0)
-        inputs.append(x)
-        residuals.append(residual)
-        powers.append(power)
+        inputs[index], residuals[index], powers[index] = x, residual, power
     return SplitData(
-        inputs=torch.from_numpy(np.stack(inputs)),
-        residual=torch.from_numpy(np.stack(residuals)),
-        power=torch.from_numpy(np.stack(powers)),
+        inputs=torch.from_numpy(inputs),
+        residual=torch.from_numpy(residuals),
+        power=torch.from_numpy(powers),
         files=tuple(line["file"] for line in lines),
     )
 
@@ -114,17 +126,18 @@ def evaluate(model: nn.Module, data: SplitData, device: torch.device) -> dict[st
         device: Where to run.
 
     Returns:
-        L1 in dB on cells with power (all, and NLOS only), BCE, total loss and
-        power-mask accuracy.
+        L1 in dB on cells with power (all; NLOS only; LOS split into direct- and
+        reflection-dominated), BCE, total loss and power-mask accuracy.
     """
     model.eval()
     l1_sum = bce_sum = correct = cells = power_cells = 0.0
     nlos_sum = nlos_cells = 0.0
+    direct_sum = direct_cells = reflected_sum = reflected_cells = 0.0
     with torch.no_grad():
         for start in range(0, len(data.files), BATCH_SIZE):
-            x = data.inputs[start : start + BATCH_SIZE].to(device)
-            r = data.residual[start : start + BATCH_SIZE].to(device)
-            p = data.power[start : start + BATCH_SIZE].to(device)
+            x = data.inputs[start : start + BATCH_SIZE].to(device).float()
+            r = data.residual[start : start + BATCH_SIZE].to(device).float()
+            p = data.power[start : start + BATCH_SIZE].to(device).float()
             out = model(x)
             error = torch.abs(out[:, 0] * RESIDUAL_SCALE_DB - r) * p
             l1_sum += float(error.sum())
@@ -132,6 +145,12 @@ def evaluate(model: nn.Module, data: SplitData, device: torch.device) -> dict[st
             nlos = 1.0 - x[:, LOS_CHANNEL]
             nlos_sum += float((error * nlos).sum())
             nlos_cells += float((p * nlos).sum())
+            reflected = x[:, LOS_CHANNEL] * p * (r >= REFLECTION_EXCESS_DB).float()
+            direct = x[:, LOS_CHANNEL] * p * (r < REFLECTION_EXCESS_DB).float()
+            reflected_sum += float((error * reflected).sum())
+            reflected_cells += float(reflected.sum())
+            direct_sum += float((error * direct).sum())
+            direct_cells += float(direct.sum())
             bce_sum += float(
                 nn.functional.binary_cross_entropy_with_logits(out[:, 1], p, reduction="sum")
             )
@@ -142,6 +161,8 @@ def evaluate(model: nn.Module, data: SplitData, device: torch.device) -> dict[st
     return {
         "l1_db": l1,
         "l1_nlos_db": nlos_sum / nlos_cells,
+        "l1_los_direct_db": direct_sum / direct_cells,
+        "l1_los_reflection_db": reflected_sum / reflected_cells,
         "bce": bce,
         "total": l1 / RESIDUAL_SCALE_DB + POWER_LOSS_WEIGHT * bce,
         "power_accuracy": correct / cells,
@@ -240,9 +261,14 @@ def train(
     torch.backends.cudnn.benchmark = False
 
     started = time.perf_counter()
-    train_data = load_split(dataset, "train")
-    val_data = load_split(dataset, "validation")
+    # The training split is held in float16 to fit WSL's memory; validation stays float32,
+    # so every reported number comes from float32 inputs and targets.
+    train_data = load_split(dataset, "train", np.float16)
+    val_data = load_split(dataset, "validation", np.float32)
     loaded = time.perf_counter() - started
+    peak_rss_mib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0  # Linux: KiB
+    load_record = {"loaded_s": round(loaded, 1), "peak_rss_mib": round(peak_rss_mib)}
+    print(json.dumps(load_record), flush=True)
 
     model = UNet(width).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
@@ -259,9 +285,9 @@ def train(
         train_sum = 0.0
         for start in range(0, len(permutation), BATCH_SIZE):
             idx = permutation[start : start + BATCH_SIZE]
-            x = train_data.inputs[idx].to(device)
-            r = train_data.residual[idx].to(device)
-            p = train_data.power[idx].to(device)
+            x = train_data.inputs[idx].to(device).float()
+            r = train_data.residual[idx].to(device).float()
+            p = train_data.power[idx].to(device).float()
             if augmentation == "symmetry":
                 x, r, p = augment_batch(x, r, p, variants)
             _, _, total = losses(model(x), r, p)
@@ -304,6 +330,8 @@ def train(
             "cudnn_deterministic": True,
         },
         "maps": {"train": len(train_data.files), "validation": len(val_data.files)},
+        "storage": {"train": "float16", "validation": "float32"},
+        "peak_rss_mib_after_load": round(peak_rss_mib),
         "best": best,
         "history": history,
         "seconds": {"load": round(loaded, 1), "total": round(time.perf_counter() - started, 1)},
@@ -365,20 +393,31 @@ def training_summary_markdown(runs: list[Path], context_runs: list[Path]) -> str
         "",
         "L1 is the mean absolute error in dB over validation cells where the ray tracer has "
         "power; power accuracy is the share of all validation cells whose power logit has "
-        "the right sign.",
+        "the right sign. LOS cells are direct-dominated when the traced gain is less than "
+        f"{REFLECTION_EXCESS_DB:.0f} dB above B0 and reflection-dominated otherwise "
+        "(ASSUMPTION, the rule of `twin fold-check`).",
         "",
-        "| seed | best epoch | L1 (dB) | NLOS L1 (dB) | BCE | power accuracy | total loss | "
-        "L1 at last epoch (dB) | seconds |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| seed | best epoch | L1 (dB) | NLOS L1 (dB) | LOS direct L1 (dB) | "
+        "LOS reflection L1 (dB) | BCE | power accuracy | total loss | last epoch: L1 (dB) | "
+        "last epoch: BCE | last epoch: power accuracy | peak RSS after load (MiB) | seconds |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for meta in metas:
         b = meta["best"]
-        nlos = f"{b['l1_nlos_db']:.3f}" if "l1_nlos_db" in b else "not recorded"
+
+        def recorded(key: str, best: dict[str, Any] = b) -> str:
+            return f"{best[key]:.3f}" if key in best else "not recorded"
+
         last = meta["history"][-1]
+        rss = meta.get("peak_rss_mib_after_load", "not recorded")
         lines.append(
-            f"| {meta['hyperparameters']['seed']} | {b['epoch']} | {b['l1_db']:.3f} | {nlos} | "
+            f"| {meta['hyperparameters']['seed']} | {b['epoch']} | {b['l1_db']:.3f} | "
+            f"{recorded('l1_nlos_db')} | {recorded('l1_los_direct_db')} | "
+            f"{recorded('l1_los_reflection_db')} | "
             f"{b['bce']:.4f} | {b['power_accuracy'] * 100:.2f}% | {b['total']:.4f} | "
-            f"{last['l1_db']:.3f} (epoch {last['epoch']}) | {meta['seconds']['total']:.0f} |"
+            f"{last['l1_db']:.3f} (epoch {last['epoch']}) | {last['bce']:.4f} | "
+            f"{last['power_accuracy'] * 100:.2f}% | {rss} | "
+            f"{meta['seconds']['total']:.0f} |"
         )
     lines += [
         "",
