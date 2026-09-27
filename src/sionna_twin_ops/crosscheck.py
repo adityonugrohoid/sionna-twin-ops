@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from sionna_twin_ops.baselines import los_mask, map_geometry
+from sionna_twin_ops.baselines import b0_gain_db, los_mask, map_geometry
 from sionna_twin_ops.site import place_site, site_class_for
 from sionna_twin_ops.terrain import GRID_SPACING_M, generate_terrain
 
@@ -270,6 +270,9 @@ def symmetry_check_markdown(terrain_id: int, azimuth_deg: float, tilt_deg: float
 
 
 FOLD_TERRAIN_IDS = (3, 6, 1, 4, 5, 8)  # two training terrains per site class
+# ASSUMPTION: a cell whose traced gain exceeds B0 (direct path and antenna pattern, no
+# terrain) by this much is reflection-dominated; below it, direct-dominated.
+REFLECTION_EXCESS_DB = 3.0
 SHADOW_DISTANCE_BINS = ((1.0, 2.0), (2.0, 4.0), (4.0, float("inf")))  # in cells
 
 
@@ -346,16 +349,20 @@ def fold_check_markdown(azimuth_deg: float, tilt_deg: float) -> str:
         surface = measurement_surface(terrain, site, fold)
         return solve_map(scene, surface, weights, specular_settings(samples, 1)).path_gain
 
-    rows: dict[str, list[tuple[Any, Any, Any, Any, Any]]] = {}
+    rows: dict[str, list[tuple[Any, Any, Any, Any, Any, Any]]] = {}
     for terrain_id in FOLD_TERRAIN_IDS:
         terrain = generate_terrain(terrain_id, GRID_SPACING_M)
         site = place_site(terrain, site_class_for(terrain_id))
         dataset_map = trace(terrain, site, DATASET_FOLD, DATASET_SAMPLES)
         other_fold = trace(terrain, site, "nw-se", DATASET_SAMPLES)
         reference = trace(terrain, site, DATASET_FOLD, REFERENCE_SAMPLES)
-        los = los_mask(map_geometry(terrain, site))
+        geometry = map_geometry(terrain, site)
+        los = los_mask(geometry)
+        with np.errstate(divide="ignore"):
+            excess = 10.0 * np.log10(dataset_map) - b0_gain_db(geometry, azimuth_deg, tilt_deg)
+        reflection = (dataset_map > 0) & (excess >= REFLECTION_EXCESS_DB)
         rows.setdefault(site.site_class, []).append(
-            (dataset_map, other_fold, reference, los, distance_to_shadow(los))
+            (dataset_map, other_fold, reference, los, distance_to_shadow(los), reflection)
         )
         print(f"terrain {terrain_id} ({site.site_class}) traced", flush=True)
 
@@ -411,4 +418,35 @@ def fold_check_markdown(azimuth_deg: float, tilt_deg: float) -> str:
                 + _pooled([(m[0], m[1], m[3] & (m[4] >= low) & (m[4] < high)) for m in maps])
                 + " |"
             )
+    lines += [
+        "",
+        "## Fold term by dominant path",
+        "",
+        f"A cell with power in the SW-NE map is reflection-dominated when its traced gain "
+        f"exceeds B0 (direct path and antenna pattern, no terrain) by {REFLECTION_EXCESS_DB:.0f} "
+        "dB or more (ASSUMPTION), and direct-dominated otherwise. Median / p95 of the fold "
+        "term, and the cells compared.",
+        "",
+        "| site class | LOS direct | LOS reflection | NLOS direct | NLOS reflection | "
+        "LOS cells reflection-dominated |",
+        "|---|---|---|---|---|---|",
+    ]
+
+    def cut(maps: list[Any], region: str, kind: str) -> str:
+        pairs = []
+        for m in maps:
+            place = m[3] if region == "LOS" else ~m[3]
+            path = m[5] if kind == "reflection" else ~m[5]
+            pairs.append((m[0], m[1], place & path))
+        median, p95, _, count = _pooled(pairs).split(" | ")
+        return f"{median} / {p95} ({count})"
+
+    for name, maps in groups:
+        lit = sum(int((m[3] & (m[0] > 0)).sum()) for m in maps)
+        reflected = sum(int((m[3] & m[5]).sum()) for m in maps)
+        lines.append(
+            f"| {name} | {cut(maps, 'LOS', 'direct')} | {cut(maps, 'LOS', 'reflection')} | "
+            f"{cut(maps, 'NLOS', 'direct')} | {cut(maps, 'NLOS', 'reflection')} | "
+            f"{reflected / lit * 100:.1f}% |"
+        )
     return "\n".join(lines) + "\n"
