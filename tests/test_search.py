@@ -1,5 +1,7 @@
 """Tilt and power search arithmetic (spec rule Q)."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -76,3 +78,31 @@ def test_search_map_names_keep_the_rule_tilt_apart_from_a_half_degree() -> None:
     assert search_map_name(52, 90.0, 4.5346) == "t052_a090_t04.5346.npy"
     with pytest.raises(ValueError, match="1e-4"):
         search_map_name(52, 90.0, 4.53461)
+
+
+def test_cpu_raytracer_medians_are_quoted_from_the_committed_evaluation() -> None:
+    from sionna_twin_ops.search import cpu_raytracer_seconds
+
+    report = Path(__file__).resolve().parents[1] / "results" / "evaluation_test.md"
+    first, further = cpu_raytracer_seconds(report)
+    assert first > 1.0 and further > 1.0
+
+
+def test_share_row_counts_cases_within_one_percent() -> None:
+    from sionna_twin_ops.search import _share_row
+
+    row = _share_row("x", [1.0, 0.995, 0.98, 1.02])
+    assert row.startswith("| x | 0.9975 |")
+    assert row.endswith("| 0.9800 | 3 of 4 |")
+
+
+def test_terrain_objectives_read_every_search_map(tmp_path: Path) -> None:
+    from sionna_twin_ops.search import search_map_name, terrain_objectives
+
+    (tmp_path / "maps").mkdir()
+    gain = np.full((2, 2), 1e-9)
+    for tilt in (4.5, 4.5346):
+        np.save(tmp_path / "maps" / search_map_name(52, 90.0, tilt), gain.astype(np.float32))
+    values = terrain_objectives(tmp_path, 52, np.array([[True, True], [False, False]]))
+    assert set(values) == {(90.0, 4.5), (90.0, 4.5346)}
+    assert values[(90.0, 4.5)][-1] == 2 - 2  # -90 dB is covered everywhere

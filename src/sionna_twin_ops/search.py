@@ -10,8 +10,9 @@ Every chosen setting is scored with the ray tracer. Synthetic terrain.
 
 import json
 import os
+import re
 import time
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -371,3 +372,451 @@ def trace_search(
     }
     (out / META).write_text(json.dumps(meta, indent=1), newline="\n")
     return meta
+
+
+_CPU_ROW = re.compile(r"^\| CPU \| (new terrain, first map|each further map) \| ([\d.]+) \|")
+
+
+def cpu_raytracer_seconds(evaluation_report: Path) -> tuple[float, float]:
+    """The CPU ray tracer's measured medians, quoted from the committed evaluation report.
+
+    Args:
+        evaluation_report: results/evaluation_test.md.
+
+    Returns:
+        (new terrain first map, each further map) in seconds.
+
+    Raises:
+        ValueError: If the report lacks either row.
+    """
+    rows = {
+        m.group(1): float(m.group(2))
+        for line in evaluation_report.read_text().splitlines()
+        if (m := _CPU_ROW.match(line))
+    }
+    if len(rows) != 2:
+        raise ValueError(f"{evaluation_report} lacks the CPU ray tracer rows")
+    return rows["new terrain, first map"], rows["each further map"]
+
+
+def traced_objectives(
+    trace_dir: Path, terrain_id: int, azimuth: float, tilt: float, near: NDArray[np.bool_]
+) -> NDArray[np.float64]:
+    """Objective Q1 of one ray-traced search map at every power.
+
+    Args:
+        trace_dir: Output of `trace_search`.
+        terrain_id: Terrain id.
+        azimuth: Azimuth.
+        tilt: Tilt.
+        near: Cells within RADIUS_M.
+
+    Returns:
+        One objective per power of POWERS_DBM.
+    """
+    gain = np.load(trace_dir / "maps" / search_map_name(terrain_id, azimuth, tilt)).astype(
+        np.float64
+    )
+    has_power = gain > 0
+    with np.errstate(divide="ignore"):
+        gain_db = np.where(has_power, 10.0 * np.log10(np.where(has_power, gain, 1.0)), -np.inf)
+    return objectives(gain_db, has_power, near)
+
+
+_SEARCH_MAP = re.compile(r"^t(\d{3})_a(\d{3})_t(\d{2}\.\d{4})\.npy$")
+
+
+def terrain_objectives(
+    trace_dir: Path, terrain_id: int, near: NDArray[np.bool_]
+) -> dict[tuple[float, float], NDArray[np.float64]]:
+    """Objectives of every search map of one terrain.
+
+    Args:
+        trace_dir: Output of `trace_search`.
+        terrain_id: Terrain id.
+        near: Cells within RADIUS_M.
+
+    Returns:
+        {(azimuth, tilt): one objective per power}.
+    """
+    out = {}
+    for path in sorted((trace_dir / "maps").glob(f"t{terrain_id:03d}_*.npy")):
+        m = _SEARCH_MAP.match(path.name)
+        if m is None:
+            raise ValueError(f"{path.name} is not a search map name")
+        key = (float(m.group(2)), float(m.group(3)))
+        out[key] = traced_objectives(trace_dir, terrain_id, key[0], key[1], near)
+    return out
+
+
+@dataclass
+class Scores:
+    """Ray-traced objectives and the choosers' shares of the optimum.
+
+    Attributes:
+        optimum: Per "terrain/azimuth": (tilt, power, objective) of the 1 deg grid optimum.
+        whole_optimum: Per terrain: (azimuth, tilt, power, objective) over the whole grid.
+        shares: Per chooser: {"terrain/azimuth": share of the optimum}.
+        whole_shares: Per chooser: {terrain: share of the whole-grid optimum}.
+        chosen: Per chooser: {"terrain/azimuth": (tilt, power)}.
+    """
+
+    optimum: dict[str, tuple[float, float, float]] = field(default_factory=dict)
+    whole_optimum: dict[str, tuple[float, float, float, float]] = field(default_factory=dict)
+    shares: dict[str, dict[str, float]] = field(default_factory=dict)
+    whole_shares: dict[str, dict[str, float]] = field(default_factory=dict)
+    chosen: dict[str, dict[str, tuple[float, float]]] = field(default_factory=dict)
+
+
+def score(trace_dir: Path, plan: dict[str, Any]) -> Scores:
+    """Score every chooser's settings with the ray tracer.
+
+    Choosers: the rule of thumb (its tilt, RULE_POWER_DBM) and the surrogate per seed, with
+    the CPU pass's choices and, separately, the GPU pass's.
+
+    Args:
+        trace_dir: Output of `trace_search` (meta.json and maps).
+        plan: plan.json of `twin search-surrogate`.
+
+    Returns:
+        The scores.
+
+    Raises:
+        ValueError: If an optimum is not positive (a share would be meaningless).
+    """
+    from sionna_twin_ops.baselines import map_geometry
+
+    meta = json.loads((trace_dir / META).read_text())
+    rule_tilt = round(plan["rule_tilt_deg"], 4)
+    choosers: dict[str, dict[str, tuple[float, float]]] = {"rule of thumb": {}}
+    for label, key in (("CPU", "choices"), ("GPU", "gpu_choices")):
+        for seed, per_case in plan[key]["cases"].items():
+            choosers[f"surrogate seed {seed} ({label})"] = {
+                k: (v[0], v[1]) for k, v in per_case.items()
+            }
+    scores = Scores()
+    for terrain, site_record in meta["sites"].items():
+        terrain_id = int(terrain)
+        site = Site(**site_record)
+        geometry = map_geometry(generate_terrain(terrain_id, GRID_SPACING_M), site)
+        near = geometry.distance_km * 1000.0 <= RADIUS_M
+        traced = terrain_objectives(trace_dir, terrain_id, near)
+
+        def value(azimuth: float, tilt: float, power: float, traced: Any = traced) -> float:
+            return float(traced[(azimuth, tilt)][POWERS_DBM.index(power)])
+
+        grid = np.array(
+            [[[value(a, t, p) for p in POWERS_DBM] for t in TRACE_TILTS_DEG] for a in AZIMUTHS_DEG]
+        )
+        a, t, p = first_best(grid)
+        whole_best = float(grid[a, t, p])
+        if whole_best <= 0:
+            raise ValueError(f"terrain {terrain}: whole-grid optimum {whole_best} is not positive")
+        scores.whole_optimum[terrain] = (
+            AZIMUTHS_DEG[a],
+            TRACE_TILTS_DEG[t],
+            POWERS_DBM[p],
+            whole_best,
+        )
+        for a, azimuth in enumerate(AZIMUTHS_DEG):
+            case = f"{terrain}/{azimuth:.0f}"
+            t, p = first_best(grid[a])
+            best = float(grid[a, t, p])
+            if best <= 0:
+                raise ValueError(f"case {case}: optimum {best} is not positive")
+            scores.optimum[case] = (TRACE_TILTS_DEG[t], POWERS_DBM[p], best)
+            choosers["rule of thumb"][case] = (rule_tilt, RULE_POWER_DBM)
+            for name, chosen in choosers.items():
+                tilt, power = chosen[case]
+                scores.shares.setdefault(name, {})[case] = value(azimuth, tilt, power) / best
+        for label, key in (("CPU", "choices"), ("GPU", "gpu_choices")):
+            for seed, per_terrain in plan[key]["whole_grid"].items():
+                azimuth, tilt, power = per_terrain[terrain]
+                scores.whole_shares.setdefault(f"surrogate seed {seed} ({label})", {})[terrain] = (
+                    value(azimuth, tilt, power) / whole_best
+                )
+    scores.chosen = choosers
+    return scores
+
+
+def dataset_agreement(trace_dir: Path, dataset: Path) -> tuple[int, int, float]:
+    """Search maps against the dataset's maps at the shared grid tilts.
+
+    Args:
+        trace_dir: Output of `trace_search`.
+        dataset: The dataset directory.
+
+    Returns:
+        (maps compared, maps bit-identical, largest absolute difference in dB where both
+        have power).
+
+    Raises:
+        ValueError: If a pair disagrees on which cells have power.
+    """
+    from sionna_twin_ops.dataset import map_name
+
+    meta = json.loads((trace_dir / META).read_text())
+    compared = identical = 0
+    worst = 0.0
+    for line in read_manifest(dataset):
+        if str(line["terrain_id"]) not in meta["sites"] or line["kind"] != "grid":
+            continue
+        ours = np.load(
+            trace_dir
+            / "maps"
+            / search_map_name(line["terrain_id"], line["azimuth_deg"], line["tilt_deg"])
+        )
+        theirs = np.load(
+            dataset / "maps" / map_name(line["terrain_id"], line["azimuth_deg"], line["tilt_deg"])
+        )
+        if not np.array_equal(ours > 0, theirs > 0):
+            raise ValueError(f"{line['file']}: search and dataset maps differ in cells with power")
+        compared += 1
+        identical += int(np.array_equal(ours, theirs))
+        power = ours > 0
+        if power.any():
+            worst = max(worst, float(np.abs(10.0 * np.log10(ours[power] / theirs[power])).max()))
+    return compared, identical, worst
+
+
+def _share_row(name: str, shares: list[float]) -> str:
+    values = np.asarray(shares)
+    near = int((values >= NEAR_OPTIMUM).sum())
+    return (
+        f"| {name} | {np.median(values):.4f} | {np.percentile(values, 10):.4f} | "
+        f"{values.min():.4f} | {near} of {len(values)} |"
+    )
+
+
+def report_markdown(
+    scores: Scores,
+    plan: dict[str, Any],
+    surrogate: dict[str, dict[str, Any]],
+    trace_meta: dict[str, Any],
+    agreement: tuple[int, int, float],
+    cpu_seconds: tuple[float, float],
+    site_classes: dict[str, str],
+) -> str:
+    """The search report (spec rule Q).
+
+    Args:
+        scores: Output of `score`.
+        plan: plan.json of `twin search-surrogate`.
+        surrogate: {"cpu": record, "cuda": record} of `surrogate_search`.
+        trace_meta: meta.json of `trace_search`.
+        agreement: Output of `dataset_agreement`.
+        cpu_seconds: Output of `cpu_raytracer_seconds`.
+        site_classes: Site class per terrain.
+
+    Returns:
+        Markdown.
+    """
+    settings = trace_meta["settings"]
+    origin = trace_meta["provenance"]
+    terrains = list(trace_meta["sites"])
+    cases = len(scores.optimum)
+    rule = plan["rule_tilt_deg"]
+    lines = [
+        "# Tilt and power search on the test split",
+        "",
+        "Synthetic terrain, not a real place; one sector, no vegetation, buildings or "
+        "interference, flat Earth. Ray tracer: Sionna RT "
+        f"{origin['sionna-rt']}, {settings['variant']}, {settings['samples_per_tx']:.0e} rays, "
+        f"max depth {settings['max_depth']}, line of sight and specular reflection only, seed "
+        f"{settings['seed']} (commit {origin['commit'][:7]}, {origin['gpu']}); pattern: 3GPP TR "
+        f"38.901. Surrogate: {', '.join(surrogate['cpu']['runs'])} (best epochs; commit "
+        f"{surrogate['cpu']['commit'][:7]}, torch {surrogate['cpu']['torch']}). Written by "
+        "`twin search-report`.",
+        "",
+        f"Cases: {cases} (terrains {', '.join(terrains)}, 8 azimuths each). Variables: tilt and "
+        f"sector power. Objective Q1: covered cells within {RADIUS_M / 1000:.0f} km of the site "
+        f"(ASSUMPTION) minus {SPILL_WEIGHT:g} (ASSUMPTION) times covered cells beyond it; a cell "
+        f"is covered where RSRP reaches {RSRP_THRESHOLD_DBM:.0f} dBm, with the sector power "
+        f"spread over {RESOURCE_ELEMENTS} resource elements (both ASSUMPTION, as in the "
+        "evaluation). The map reaches 3.6 km at its corners, so the cells beyond 3 km are the "
+        "outer ring and corners only.",
+        "",
+        "Choosers:",
+        f"- Ray tracer: tilt 0 to 12 deg in 1 deg ({len(TRACE_TILTS_DEG)} traces per case), power "
+        f"{POWERS_DBM[0]:.0f} to {POWERS_DBM[-1]:.0f} dBm in 1 dB (post-processing). Its best "
+        "setting is the optimum every share below is taken of.",
+        f"- Surrogate: tilt 0 to 12 deg in 0.5 deg ({len(SURROGATE_TILTS_DEG)} inferences per "
+        "case), the same powers; covered cells need the power head to say power. Choices come "
+        "from the CPU pass; the GPU pass in float32 breaks some near-ties the other way "
+        f"(choices agree: {plan['gpu_choices_agree']}), so its choices are scored too.",
+        f"- Rule of thumb: tilt = arctan(30 m / 3 km) + half the column's vertical half-power "
+        f"beamwidth ({plan['hpbw_deg']:.2f} deg, from the TR 38.901 element times the 8 x 1 "
+        f"array factor) = {rule:.2f} deg, at {RULE_POWER_DBM:.0f} dBm.",
+        "",
+        "Every chosen setting is scored with the ray tracer: settings off the 1 deg grid "
+        "(half-degree tilts, the rule's tilt) were traced for the purpose. Ties go to the lower "
+        "azimuth, then the lower tilt, then the lower power.",
+        "",
+        f"## Primary: per (terrain, azimuth), {cases} cases",
+        "",
+        "Share = the chosen setting's ray-traced objective over the ray tracer's optimum on the "
+        "1 deg grid; a half-degree choice can exceed 1.",
+        "",
+        "| chooser | median share | p10 | min | within 1% of the optimum |",
+        "|---|---|---|---|---|",
+    ]
+    names = list(scores.shares)
+    lines += [_share_row(name, list(scores.shares[name].values())) for name in names]
+    optimum_powers = [p for _, p, _ in scores.optimum.values()]
+    optimum_tilts = [t for t, _, _ in scores.optimum.values()]
+    lines += [
+        "",
+        f"The ray tracer's optimum uses {POWERS_DBM[-1]:.0f} dBm in "
+        f"{sum(p == POWERS_DBM[-1] for p in optimum_powers)} of {cases} cases; its tilt ranges "
+        f"{min(optimum_tilts):.0f} to {max(optimum_tilts):.0f} deg (median "
+        f"{np.median(optimum_tilts):.0f}).",
+        "",
+        "### By terrain",
+        "",
+        "Lowest share over the 8 azimuths, and the number of azimuths below 99% of the optimum.",
+        "",
+        "| terrain | site class | optimum tilt, median (deg) | " + " | ".join(names) + " |",
+        "|---|---|---|" + "---|" * len(names),
+    ]
+    for terrain in terrains:
+        keys = [k for k in scores.optimum if k.split("/")[0] == terrain]
+        tilts = [scores.optimum[k][0] for k in keys]
+        cells = []
+        for name in names:
+            values = [scores.shares[name][k] for k in keys]
+            cells.append(f"{min(values):.4f} ({sum(v < NEAR_OPTIMUM for v in values)})")
+        lines.append(
+            f"| {terrain} | {site_classes[terrain]} | {np.median(tilts):.1f} | "
+            + " | ".join(cells)
+            + " |"
+        )
+    whole_names = list(scores.whole_shares)
+    lines += [
+        "",
+        "## Secondary: one choice per terrain over azimuth, tilt and power",
+        "",
+        "| terrain | ray tracer optimum (azimuth, tilt, power: objective) | "
+        + " | ".join(whole_names)
+        + " |",
+        "|---|---|" + "---|" * len(whole_names),
+    ]
+    for terrain in terrains:
+        a, t, p, best = scores.whole_optimum[terrain]
+        lines.append(
+            f"| {terrain} | {a:.0f} deg, {t:.0f} deg, {p:.0f} dBm: {best:.0f} | "
+            + " | ".join(f"{scores.whole_shares[n][terrain]:.4f}" for n in whole_names)
+            + " |"
+        )
+    lines += [
+        "",
+        "| chooser | median share | p10 | min | within 1% of the optimum |",
+        "|---|---|---|---|---|",
+    ]
+    lines += [_share_row(name, list(scores.whole_shares[name].values())) for name in whole_names]
+
+    gpu_s = [s for per in surrogate["cuda"]["seconds"].values() for s in per.values()]
+    cpu_s = [s for per in surrogate["cpu"]["seconds"].values() for s in per.values()]
+    rt_s = list(trace_meta["terrain_seconds"].values())
+    first, further = cpu_seconds
+    maps = len(AZIMUTHS_DEG) * len(TRACE_TILTS_DEG)
+    rt_cpu = first + (maps - 1) * further
+    lines += [
+        "",
+        "## Wall time per terrain, same machine",
+        "",
+        f"Seconds per terrain for the whole search ({len(AZIMUTHS_DEG)} azimuths). Surrogate: "
+        f"terrain generation, terrain channels, per-map channels and {len(AZIMUTHS_DEG)} "
+        f"batched inferences of {len(SURROGATE_TILTS_DEG)} tilts "
+        f"({len(AZIMUTHS_DEG) * len(SURROGATE_TILTS_DEG)} maps), and the objectives at every "
+        f"power; {len(gpu_s)} timings each (3 seeds x {len(terrains)} terrains), after one "
+        f"untimed warm-up. Ray tracer: terrain generation, measurement surface, one scene per "
+        f"azimuth and {maps} solves, through the Windows runner, after one untimed solve; the "
+        "objectives take milliseconds and are not in it. The CPU ray tracer was not run for "
+        f"this: its figure is estimated as the evaluation's measured CPU medians "
+        f"(`results/evaluation_test.md`), {first:.3f} s for a new terrain's first map plus "
+        f"{maps - 1} x {further:.3f} s.",
+        "",
+        "| method | hardware | median | min | max |",
+        "|---|---|---|---|---|",
+        f"| surrogate | GPU ({surrogate['cuda']['gpu']}) | {np.median(gpu_s):.2f} | "
+        f"{min(gpu_s):.2f} | {max(gpu_s):.2f} |",
+        f"| surrogate | CPU | {np.median(cpu_s):.2f} | {min(cpu_s):.2f} | {max(cpu_s):.2f} |",
+        f"| ray tracer | GPU ({origin['gpu']}) | {np.median(rt_s):.1f} | {min(rt_s):.1f} | "
+        f"{max(rt_s):.1f} |",
+        f"| ray tracer | CPU (llvm), estimated | {rt_cpu:.0f} | | |",
+        "",
+        f"Per terrain, the ray tracer's search takes {np.median(rt_s) / np.median(gpu_s):.0f} "
+        f"times as long as the surrogate's on the GPU; without a GPU, an estimated "
+        f"{rt_cpu / np.median(cpu_s):.0f} times.",
+        "",
+    ]
+    compared, identical, worst = agreement
+    lines += [
+        "## Check: search maps against the dataset",
+        "",
+        f"The search re-traced the dataset's grid tilts (0, 3, 6, 9, 12 deg) with the same "
+        f"settings: {identical} of {compared} maps are bit-identical; the largest difference "
+        f"where both have power is {worst:.2e} dB.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def search_figure(scores: Scores, caption: str, path: Path) -> None:
+    """Shares of the ray tracer's optimum: per case (left) and per terrain over the whole grid
+    (right), for the rule of thumb and the surrogate's CPU choices.
+
+    Args:
+        scores: Output of `score`.
+        caption: Provenance caption printed under the panels.
+        path: Output image.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    matplotlib.rcParams["axes.unicode_minus"] = False
+    fig, (left, right) = plt.subplots(1, 2, figsize=(11.0, 4.6), layout="constrained")
+    styles = {
+        "rule of thumb": ("#b8423a", "o"),
+        "surrogate seed 0 (CPU)": ("#2a6fb0", "s"),
+        "surrogate seed 1 (CPU)": ("#3f9a5a", "D"),
+        "surrogate seed 2 (CPU)": ("#8a5bb5", "^"),
+    }
+    for name, (color, marker) in styles.items():
+        values = np.sort(np.asarray(list(scores.shares[name].values())))
+        rank = np.arange(1, len(values) + 1)
+        left.plot(values, rank, color=color, marker=marker, ms=3.5, lw=1.5, label=name)
+    left.axvline(NEAR_OPTIMUM, color="#8c8a85", lw=1.0, ls="--")
+    left.set_xlabel("share of the ray tracer's optimum (ray-traced objective)", fontsize=9)
+    left.set_ylabel("cases at or below the share (of 72)", fontsize=9)
+    left.set_title("per (terrain, azimuth): tilt and power", fontsize=10, loc="left")
+    left.legend(fontsize=8, loc="upper left", frameon=False)
+    terrains = list(scores.whole_optimum)
+    x = np.arange(len(terrains))
+    for k, name in enumerate(n for n in styles if n != "rule of thumb"):
+        color, marker = styles[name]
+        right.plot(
+            x + (k - 1) * 0.18,
+            [scores.whole_shares[name][t] for t in terrains],
+            ls="none",
+            marker=marker,
+            color=color,
+            ms=6,
+            label=name,
+        )
+    right.axhline(1.0, color="#8c8a85", lw=1.0)
+    right.axhline(NEAR_OPTIMUM, color="#8c8a85", lw=1.0, ls="--")
+    right.set_xticks(x, terrains, fontsize=8)
+    right.set_xlabel("test terrain", fontsize=9)
+    right.set_ylabel("share of the ray tracer's optimum", fontsize=9)
+    right.set_title("per terrain: azimuth, tilt and power", fontsize=10, loc="left")
+    right.legend(fontsize=8, loc="lower left", frameon=False)
+    for ax in (left, right):
+        ax.tick_params(labelsize=8)
+        ax.grid(color="#e4e2dc", lw=0.6)
+        ax.set_axisbelow(True)
+    fig.text(0.01, -0.02, caption, fontsize=7.5, color="#52514e", ha="left", va="top", wrap=True)
+    fig.savefig(path, dpi=110, bbox_inches="tight", pil_kwargs={"quality": 88})
+    plt.close(fig)
