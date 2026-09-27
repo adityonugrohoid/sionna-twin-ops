@@ -289,12 +289,14 @@ def search_report_command(args: argparse.Namespace) -> None:
         f"Synthetic terrain, {args.split} split, {len(scores.optimum)} cases. Ray tracer: Sionna "
         f"RT {origin['sionna-rt']}, {settings['variant']}, {settings['samples_per_tx']:.0e} "
         "rays, LOS and specular reflection only; pattern: 3GPP TR 38.901. Objective: covered "
-        f"cells within {plan['radius_m'] / 1000:g} km minus covered cells beyond, within the map "
-        f"(both ASSUMPTION); covered at RSRP >= {search.RSRP_THRESHOLD_DBM:.0f} dBm. Share = "
-        "ray-traced objective of the chosen setting over the ray tracer's optimum (tilt in 1 "
-        f"deg, power in 1 dB). Rule of thumb: {plan['rule_tilt_deg']:.2f} deg at "
+        f"fraction within {plan['radius_m'] / 1000:g} km minus covered fraction beyond, within "
+        f"the map (both ASSUMPTION); covered at RSRP >= {search.RSRP_THRESHOLD_DBM:.0f} dBm. "
+        "Shortfall = the ray tracer's optimum (tilt in 1 deg, power "
+        f"{search.POWERS_DBM[0]:.0f} to {search.POWERS_DBM[-1]:.0f} dBm in 1 dB) minus the "
+        "chosen setting's ray-traced objective. "
+        f"Rule of thumb: {plan['rule_tilt_deg']:.2f} deg at "
         f"{search.RULE_POWER_DBM:.0f} dBm. Surrogate: {', '.join(surrogate['cpu']['runs'])}. "
-        "Dashed: 99%."
+        "Dashed: 1 point."
     )
     (args.out_dir / "figures").mkdir(parents=True, exist_ok=True)
     (args.out_dir / f"search_{args.split}.md").write_text(report, newline="\n")

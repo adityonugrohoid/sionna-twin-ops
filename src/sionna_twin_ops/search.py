@@ -1,12 +1,12 @@
 """Tilt and power search (spec rule Q): the surrogate and a rule of thumb against the ray tracer.
 
 Per (terrain, azimuth) case the variables are electrical tilt and sector power. The
-objective (Q1) counts covered cells within a service radius of the site minus SPILL_WEIGHT
-times covered cells beyond it, within the map; a cell is covered where RSRP (path gain plus
-power per resource element, as in spec E2) reaches the evaluation's RSRP threshold. The ray
-tracer searches tilt on a 1 deg grid, the surrogate on a 0.5 deg grid; power is
-post-processing on both sides. Every chosen setting is scored with the ray tracer. Synthetic
-terrain.
+objective (Q0b) is the covered fraction of the cells within a service radius of the site
+minus SPILL_WEIGHT times the covered fraction of the map's cells beyond it; a cell is covered
+where RSRP (path gain plus power per resource element, as in spec E2) reaches the
+evaluation's RSRP threshold. The ray tracer searches tilt on a 1 deg grid, the surrogate on
+a 0.5 deg grid; power is post-processing on both sides. Every chosen setting is scored with
+the ray tracer. Synthetic terrain.
 """
 
 import json
@@ -27,15 +27,15 @@ from sionna_twin_ops.terrain import GRID_SPACING_M, generate_terrain
 
 TRACE_TILTS_DEG = tuple(float(t) for t in range(0, 13))  # ray tracer: 0 to 12 deg in 1 deg
 SURROGATE_TILTS_DEG = tuple(t / 2.0 for t in range(0, 25))  # surrogate: 0 to 12 deg in 0.5 deg
-POWERS_DBM = tuple(float(p) for p in range(37, 47))  # 37 to 46 dBm in 1 dB
+POWERS_DBM = tuple(float(p) for p in range(28, 47))  # 28 to 46 dBm in 1 dB (spec Q0b)
 RULE_POWER_DBM = 46.0
 RADIUS_M = 1500.0  # ASSUMPTION (spec Q0): the service radius, inside the map's half-width
 FIRST_RADIUS_M = 3000.0  # the first Q1 definition, beyond the map's half-width (spec Q0)
-SPILL_WEIGHT = 1.0  # ASSUMPTION (spec Q1): one cell of spill beyond the radius costs one cell
+SPILL_WEIGHT = 1.0  # ASSUMPTION (spec Q0b): the two area-normalised fractions weigh the same
 FIXED_SETTING = (0.0, 46.0)  # no search: tilt in deg, power in dBm (spec Q0)
 RESOURCE_ELEMENTS = 1200  # ASSUMPTION (spec E2): 20 MHz carrier, as in evaluate.py
 RSRP_THRESHOLD_DBM = -110.0  # ASSUMPTION (spec E2), as in evaluate.py
-NEAR_OPTIMUM = 0.99  # "within 1% of the optimum"
+WITHIN_POINTS = 0.01  # spec Q0b: "within 1 point" of the optimum on the -1..1 scale
 HPBW_STEP_DEG = 1e-4
 META = "meta.json"
 
@@ -127,7 +127,7 @@ def radius_beyond_map(radius_m: float) -> bool:
 def objectives(
     gain_db: NDArray[np.floating[Any]], has_power: NDArray[np.bool_], near: NDArray[np.bool_]
 ) -> NDArray[np.float64]:
-    """Objective Q1 of one map at every power of POWERS_DBM.
+    """Objective Q0b of one map at every power of POWERS_DBM, on a -1..1 scale.
 
     Args:
         gain_db: Path gain in dB (ignored where has_power is False).
@@ -135,12 +135,19 @@ def objectives(
         near: Cells within the service radius.
 
     Returns:
-        One objective per power.
+        One objective per power: covered fraction inside minus SPILL_WEIGHT times covered
+        fraction outside.
+
+    Raises:
+        ValueError: If either region is empty.
     """
+    inside, outside = int(near.sum()), int((~near).sum())
+    if inside == 0 or outside == 0:
+        raise ValueError(f"regions of {inside} and {outside} cells: both must be non-empty")
     out = np.empty(len(POWERS_DBM))
     for k, power in enumerate(POWERS_DBM):
         covered = has_power & (gain_db >= covered_gain_db(power))
-        out[k] = (covered & near).sum() - SPILL_WEIGHT * (covered & ~near).sum()
+        out[k] = (covered & near).sum() / inside - SPILL_WEIGHT * (covered & ~near).sum() / outside
     return out
 
 
@@ -489,20 +496,22 @@ def terrain_objectives(
 
 @dataclass
 class Scores:
-    """Ray-traced objectives and the choosers' shares of the optimum.
+    """Ray-traced objectives and the choosers' shortfalls from the optimum.
 
     Attributes:
         optimum: Per "terrain/azimuth": (tilt, power, objective) of the 1 deg grid optimum.
         whole_optimum: Per terrain: (azimuth, tilt, power, objective) over the whole grid.
-        shares: Per chooser: {"terrain/azimuth": share of the optimum}.
-        whole_shares: Per chooser: {terrain: share of the whole-grid optimum}.
+        shortfalls: Per chooser: {"terrain/azimuth": optimum minus the chosen objective}.
+        whole_shortfalls: Per chooser: {terrain: whole-grid optimum minus the chosen}.
+        cells: Per terrain: (cells inside the radius, cells outside).
         chosen: Per chooser: {"terrain/azimuth": (tilt, power)}.
     """
 
     optimum: dict[str, tuple[float, float, float]] = field(default_factory=dict)
     whole_optimum: dict[str, tuple[float, float, float, float]] = field(default_factory=dict)
-    shares: dict[str, dict[str, float]] = field(default_factory=dict)
-    whole_shares: dict[str, dict[str, float]] = field(default_factory=dict)
+    shortfalls: dict[str, dict[str, float]] = field(default_factory=dict)
+    whole_shortfalls: dict[str, dict[str, float]] = field(default_factory=dict)
+    cells: dict[str, tuple[int, int]] = field(default_factory=dict)
     chosen: dict[str, dict[str, tuple[float, float]]] = field(default_factory=dict)
 
 
@@ -516,7 +525,7 @@ def score(trace_dirs: list[Path], plan: dict[str, Any]) -> Scores:
 
     Choosers: the rule of thumb (its tilt, RULE_POWER_DBM), the fixed setting, the surrogate
     per seed with the CPU pass's choices and, separately, the GPU pass's, and the ray tracer
-    itself (share 1 by definition).
+    itself (shortfall 0 by definition).
 
     Args:
         trace_dirs: Outputs of `trace_search`, the one with the timed grid first (its
@@ -525,9 +534,6 @@ def score(trace_dirs: list[Path], plan: dict[str, Any]) -> Scores:
 
     Returns:
         The scores.
-
-    Raises:
-        ValueError: If an optimum is not positive (a share would be meaningless).
     """
     from sionna_twin_ops.baselines import map_geometry
 
@@ -557,8 +563,7 @@ def score(trace_dirs: list[Path], plan: dict[str, Any]) -> Scores:
         )
         a, t, p = first_best(grid)
         whole_best = float(grid[a, t, p])
-        if whole_best <= 0:
-            raise ValueError(f"terrain {terrain}: whole-grid optimum {whole_best} is not positive")
+        scores.cells[terrain] = (int(near.sum()), int((~near).sum()))
         scores.whole_optimum[terrain] = (
             AZIMUTHS_DEG[a],
             TRACE_TILTS_DEG[t],
@@ -569,21 +574,19 @@ def score(trace_dirs: list[Path], plan: dict[str, Any]) -> Scores:
             case = f"{terrain}/{azimuth:.0f}"
             t, p = first_best(grid[a])
             best = float(grid[a, t, p])
-            if best <= 0:
-                raise ValueError(f"case {case}: optimum {best} is not positive")
             scores.optimum[case] = (TRACE_TILTS_DEG[t], POWERS_DBM[p], best)
             choosers[RULE][case] = (rule_tilt, RULE_POWER_DBM)
             choosers[FIXED][case] = FIXED_SETTING
             choosers[TRACER][case] = (TRACE_TILTS_DEG[t], POWERS_DBM[p])
             for name, chosen in choosers.items():
                 tilt, power = chosen[case]
-                scores.shares.setdefault(name, {})[case] = value(azimuth, tilt, power) / best
+                scores.shortfalls.setdefault(name, {})[case] = best - value(azimuth, tilt, power)
         for label, key in (("CPU", "choices"), ("GPU", "gpu_choices")):
             for seed, per_terrain in plan[key]["whole_grid"].items():
                 azimuth, tilt, power = per_terrain[terrain]
-                scores.whole_shares.setdefault(f"surrogate seed {seed} ({label})", {})[terrain] = (
-                    value(azimuth, tilt, power) / whole_best
-                )
+                scores.whole_shortfalls.setdefault(f"surrogate seed {seed} ({label})", {})[
+                    terrain
+                ] = whole_best - value(azimuth, tilt, power)
     scores.chosen = choosers
     return scores
 
@@ -628,12 +631,12 @@ def dataset_agreement(trace_dir: Path, dataset: Path) -> tuple[int, int, float]:
     return compared, identical, worst
 
 
-def _share_row(name: str, shares: list[float]) -> str:
-    values = np.asarray(shares)
-    near = int((values >= NEAR_OPTIMUM).sum())
+def _shortfall_row(name: str, shortfalls: list[float]) -> str:
+    values = np.asarray(shortfalls)
+    within = int((values <= WITHIN_POINTS).sum())
     return (
-        f"| {name} | {np.median(values):.4f} | {np.percentile(values, 10):.4f} | "
-        f"{values.min():.4f} | {near} of {len(values)} |"
+        f"| {name} | {np.median(values):.4f} | {np.percentile(values, 90):.4f} | "
+        f"{values.max():.4f} | {within} of {len(values)} |"
     )
 
 
@@ -644,6 +647,27 @@ def _counts_table(label: str, values: list[float], unit: str) -> list[str]:
         "|---|" + "---|" * len(counts),
         "| cases | " + " | ".join(str(c) for c in counts.values()) + " |",
     ]
+
+
+def edge_counts(scores: Scores) -> dict[str, int]:
+    """How many per-case optima sit on an edge of the ray tracer's grid.
+
+    Args:
+        scores: Output of `score`.
+
+    Returns:
+        Counts for the lowest and highest tilt and power, and for any edge.
+    """
+    optima = list(scores.optimum.values())
+    edges = {
+        f"tilt {TRACE_TILTS_DEG[0]:g} deg": [t == TRACE_TILTS_DEG[0] for t, _, _ in optima],
+        f"tilt {TRACE_TILTS_DEG[-1]:g} deg": [t == TRACE_TILTS_DEG[-1] for t, _, _ in optima],
+        f"power {POWERS_DBM[0]:g} dBm": [p == POWERS_DBM[0] for _, p, _ in optima],
+        f"power {POWERS_DBM[-1]:g} dBm": [p == POWERS_DBM[-1] for _, p, _ in optima],
+    }
+    counts = {name: sum(flags) for name, flags in edges.items()}
+    counts["any edge"] = sum(any(flags) for flags in zip(*edges.values(), strict=True))
+    return counts
 
 
 def objective_section(
@@ -662,63 +686,52 @@ def objective_section(
     """
     radius_m = plan["radius_m"]
     cases = len(scores.optimum)
-    names = list(scores.shares)
+    names = list(scores.shortfalls)
+    inside = sorted({c[0] for c in scores.cells.values()})
+    outside = sorted({c[1] for c in scores.cells.values()})
     lines = [f"## Objective with a {radius_m / 1000:g} km service radius", ""]
     if radius_beyond_map(radius_m):
-        lines += [
-            f"FLAWED DEFINITION. The radius ({radius_m / 1000:g} km) is beyond the map's "
-            f"half-width ({MAP_SIZE_M / 2000:g} km): only the corners lie outside it, so there "
-            "is almost no spill to avoid and the objective rewards covering as much of the map "
-            "as possible. It cannot show what a search buys. Kept as run, for the record "
-            "(spec Q0).",
-            "",
-        ]
+        raise ValueError(f"radius {radius_m} m reaches beyond the map (spec Q0)")
     lines += [
-        f"Objective: covered cells within {radius_m / 1000:g} km of the site (ASSUMPTION) minus "
-        f"{SPILL_WEIGHT:g} (ASSUMPTION) times covered cells beyond it, within the map. Rule of "
-        f"thumb: arctan(30 m / {radius_m / 1000:g} km) + {plan['hpbw_deg']:.2f} / 2 = "
-        f"{plan['rule_tilt_deg']:.2f} deg, at {RULE_POWER_DBM:.0f} dBm.",
+        f"Objective Q0b: the covered fraction of the cells within {radius_m / 1000:g} km of the "
+        f"site ({', '.join(str(n) for n in inside)} cells) minus {SPILL_WEIGHT:g} times the "
+        f"covered fraction of the map's cells beyond it ({', '.join(str(n) for n in outside)} "
+        "cells), so neither region wins by size; radius and equal weights are ASSUMPTION. It "
+        "runs from -1 to 1. Rule of thumb: arctan(30 m / "
+        f"{radius_m / 1000:g} km) + {plan['hpbw_deg']:.2f} / 2 = {plan['rule_tilt_deg']:.2f} "
+        f"deg, at {RULE_POWER_DBM:.0f} dBm.",
         "",
         f"### Per (terrain, azimuth), {cases} cases",
         "",
-        "Share = the chosen setting's ray-traced objective over the ray tracer's optimum on the "
-        "1 deg grid; a half-degree choice can exceed 1.",
+        "Shortfall = the ray tracer's optimum on the 1 deg grid minus the chosen setting's "
+        "ray-traced objective, in objective points; a half-degree choice can beat the grid and "
+        f"go negative. Within 1 point: shortfall at most {WITHIN_POINTS:g}.",
         "",
-        "| chooser | median share | p10 | min | within 1% of the optimum |",
+        "| chooser | median shortfall | p90 | max | within 1 point |",
         "|---|---|---|---|---|",
     ]
-    lines += [_share_row(name, list(scores.shares[name].values())) for name in names]
+    lines += [_shortfall_row(name, list(scores.shortfalls[name].values())) for name in names]
     surrogate_names = [n for n in names if n.startswith("surrogate")]
-    worst_name, worst_case = min(
-        ((n, k) for n in surrogate_names for k in scores.shares[n]),
-        key=lambda nk: scores.shares[nk[0]][nk[1]],
+    worst_name, worst_case = max(
+        ((n, k) for n in surrogate_names for k in scores.shortfalls[n]),
+        key=lambda nk: scores.shortfalls[nk[0]][nk[1]],
     )
-    short = {
-        k.split("/")[0]
-        for n in surrogate_names
-        for k, v in scores.shares[n].items()
-        if v < NEAR_OPTIMUM
-    }
 
-    def below(name: str) -> str:
+    def beyond(name: str) -> str:
         found = sorted(
-            {k.split("/")[0] for k, v in scores.shares[name].items() if v < NEAR_OPTIMUM}, key=int
+            {k.split("/")[0] for k, v in scores.shortfalls[name].items() if v > WITHIN_POINTS},
+            key=int,
         )
         return ", ".join(found) if found else "none"
 
+    short = {n: beyond(n) for n in surrogate_names}
     lines += [
         "",
-        f"Lowest surrogate share: {scores.shares[worst_name][worst_case]:.4f} ({worst_name}, "
-        f"terrain {worst_case.split('/')[0]}, azimuth {worst_case.split('/')[1]} deg). "
-        + (
-            "No surrogate choice falls below 99% of the optimum on any terrain."
-            if not short
-            else "Surrogate choices fall below 99% on terrains "
-            f"{', '.join(sorted(short, key=int))}."
-        )
-        + f" Terrains where the rule of thumb falls below 99%: {below(RULE)} (lowest "
-        f"{min(scores.shares[RULE].values()):.4f}); the fixed setting: {below(FIXED)} (lowest "
-        f"{min(scores.shares[FIXED].values()):.4f}).",
+        f"Largest surrogate shortfall: {scores.shortfalls[worst_name][worst_case]:.4f} "
+        f"({worst_name}, terrain {worst_case.split('/')[0]}, azimuth "
+        f"{worst_case.split('/')[1]} deg). Terrains with a case more than 1 point short: "
+        + "; ".join(f"{n}: {t}" for n, t in short.items())
+        + f"; rule of thumb: {beyond(RULE)}; fixed setting: {beyond(FIXED)}.",
         "",
         "Where the ray tracer's optimum lies:",
         "",
@@ -726,11 +739,18 @@ def objective_section(
     lines += _counts_table("optimum tilt", [t for t, _, _ in scores.optimum.values()], "deg")
     lines += [""]
     lines += _counts_table("optimum power", [p for _, p, _ in scores.optimum.values()], "dBm")
+    edges = edge_counts(scores)
     lines += [
+        "",
+        "Optima on an edge of the grid (the true optimum may lie beyond it): "
+        + ", ".join(f"{name} {n}" for name, n in edges.items())
+        + f", of {cases}. Tilt stays within 0 to 12 deg, the surrogate's training range "
+        "(limitation).",
         "",
         "#### By terrain",
         "",
-        "Lowest share over the 8 azimuths, and the number of azimuths below 99% of the optimum.",
+        "Largest shortfall over the 8 azimuths, and the number of azimuths more than 1 point "
+        "short.",
         "",
         "| terrain | site class | optimum tilt, median (deg) | " + " | ".join(names) + " |",
         "|---|---|---|" + "---|" * len(names),
@@ -740,17 +760,19 @@ def objective_section(
         tilts = [scores.optimum[k][0] for k in keys]
         cells = []
         for name in names:
-            values = [scores.shares[name][k] for k in keys]
-            cells.append(f"{min(values):.4f} ({sum(v < NEAR_OPTIMUM for v in values)})")
+            values = [scores.shortfalls[name][k] for k in keys]
+            cells.append(f"{max(values):.4f} ({sum(v > WITHIN_POINTS for v in values)})")
         lines.append(
             f"| {terrain} | {site_classes[terrain]} | {np.median(tilts):.1f} | "
             + " | ".join(cells)
             + " |"
         )
-    whole_names = list(scores.whole_shares)
+    whole_names = list(scores.whole_shortfalls)
     lines += [
         "",
         "### One choice per terrain over azimuth, tilt and power",
+        "",
+        "Shortfall from the ray tracer's whole-grid optimum.",
         "",
         "| terrain | ray tracer optimum (azimuth, tilt, power: objective) | "
         + " | ".join(whole_names)
@@ -760,16 +782,18 @@ def objective_section(
     for terrain in terrains:
         a, t, p, best = scores.whole_optimum[terrain]
         lines.append(
-            f"| {terrain} | {a:.0f} deg, {t:.0f} deg, {p:.0f} dBm: {best:.0f} | "
-            + " | ".join(f"{scores.whole_shares[n][terrain]:.4f}" for n in whole_names)
+            f"| {terrain} | {a:.0f} deg, {t:.0f} deg, {p:.0f} dBm: {best:.4f} | "
+            + " | ".join(f"{scores.whole_shortfalls[n][terrain]:.4f}" for n in whole_names)
             + " |"
         )
     lines += [
         "",
-        "| chooser | median share | p10 | min | within 1% of the optimum |",
+        "| chooser | median shortfall | p90 | max | within 1 point |",
         "|---|---|---|---|---|",
     ]
-    lines += [_share_row(name, list(scores.whole_shares[name].values())) for name in whole_names]
+    lines += [
+        _shortfall_row(name, list(scores.whole_shortfalls[name].values())) for name in whole_names
+    ]
     return [*lines, ""]
 
 
@@ -816,16 +840,17 @@ def report_markdown(
         "`twin search-report`.",
         "",
         f"Cases: {cases} (terrains {', '.join(terrains)}, {len(AZIMUTHS_DEG)} azimuths each). "
-        "Variables: tilt and sector power. Objective Q1: covered cells within a service radius "
-        f"minus {SPILL_WEIGHT:g} (ASSUMPTION) times covered cells beyond it, within the map "
-        f"({MAP_SIZE_M / 1000:.2f} km square, centred on the site); a cell is covered where RSRP "
+        "Variables: tilt and sector power. Objective Q0b: covered fraction within a service "
+        f"radius minus {SPILL_WEIGHT:g} (ASSUMPTION) times covered fraction beyond it, within "
+        f"the map ({MAP_SIZE_M / 1000:.2f} km square, centred on the site); a cell is covered "
+        "where RSRP "
         f"reaches {RSRP_THRESHOLD_DBM:.0f} dBm, with the sector power spread over "
         f"{RESOURCE_ELEMENTS} resource elements (both ASSUMPTION, as in the evaluation).",
         "",
         "Choosers:",
         f"- Ray tracer: tilt 0 to 12 deg in 1 deg ({len(TRACE_TILTS_DEG)} traces per case), power "
         f"{POWERS_DBM[0]:.0f} to {POWERS_DBM[-1]:.0f} dBm in 1 dB (post-processing). Its best "
-        "setting is the optimum every share is taken of.",
+        "setting is the optimum every shortfall is taken from.",
         f"- Surrogate: tilt 0 to 12 deg in 0.5 deg ({len(SURROGATE_TILTS_DEG)} inferences per "
         "case), the same powers; covered cells need the power head to say power. Choices come "
         "from the CPU pass; the GPU pass in float32 breaks some near-ties the other way "
@@ -893,8 +918,8 @@ def report_markdown(
 
 
 def search_figure(scores: Scores, caption: str, path: Path) -> None:
-    """Shares of the ray tracer's optimum: per case (left) and per terrain over the whole grid
-    (right), for the rule of thumb, the fixed setting and the surrogate's CPU choices.
+    """Shortfalls from the ray tracer's optimum: per case (left) and per terrain over the whole
+    grid (right), for the rule of thumb, the fixed setting and the surrogate's CPU choices.
 
     Args:
         scores: Output of `score`.
@@ -916,34 +941,34 @@ def search_figure(scores: Scores, caption: str, path: Path) -> None:
         "surrogate seed 2 (CPU)": ("#8a5bb5", "^"),
     }
     for name, (color, marker) in styles.items():
-        values = np.sort(np.asarray(list(scores.shares[name].values())))
+        values = np.sort(np.asarray(list(scores.shortfalls[name].values())))
         rank = np.arange(1, len(values) + 1)
         left.plot(values, rank, color=color, marker=marker, ms=3.5, lw=1.5, label=name)
-    left.axvline(NEAR_OPTIMUM, color="#8c8a85", lw=1.0, ls="--")
-    left.set_xlabel("share of the ray tracer's optimum (ray-traced objective)", fontsize=9)
-    left.set_ylabel(f"cases at or below the share (of {len(scores.optimum)})", fontsize=9)
+    left.axvline(WITHIN_POINTS, color="#8c8a85", lw=1.0, ls="--")
+    left.set_xlabel("shortfall from the ray tracer's optimum (objective points)", fontsize=9)
+    left.set_ylabel(f"cases at or below the shortfall (of {len(scores.optimum)})", fontsize=9)
     left.set_title("per (terrain, azimuth): tilt and power", fontsize=10, loc="left")
-    left.legend(fontsize=8, loc="upper left", frameon=False)
+    left.legend(fontsize=8, loc="lower right", frameon=False)
     terrains = list(scores.whole_optimum)
     x = np.arange(len(terrains))
     for k, name in enumerate(n for n in styles if n not in (RULE, FIXED)):
         color, marker = styles[name]
         right.plot(
             x + (k - 1) * 0.18,
-            [scores.whole_shares[name][t] for t in terrains],
+            [scores.whole_shortfalls[name][t] for t in terrains],
             ls="none",
             marker=marker,
             color=color,
             ms=6,
             label=name,
         )
-    right.axhline(1.0, color="#8c8a85", lw=1.0)
-    right.axhline(NEAR_OPTIMUM, color="#8c8a85", lw=1.0, ls="--")
+    right.axhline(0.0, color="#8c8a85", lw=1.0)
+    right.axhline(WITHIN_POINTS, color="#8c8a85", lw=1.0, ls="--")
     right.set_xticks(x, terrains, fontsize=8)
     right.set_xlabel("terrain", fontsize=9)
-    right.set_ylabel("share of the ray tracer's optimum", fontsize=9)
+    right.set_ylabel("shortfall from the ray tracer's optimum", fontsize=9)
     right.set_title("per terrain: azimuth, tilt and power", fontsize=10, loc="left")
-    right.legend(fontsize=8, loc="lower left", frameon=False)
+    right.legend(fontsize=8, loc="upper left", frameon=False)
     for ax in (left, right):
         ax.tick_params(labelsize=8)
         ax.grid(color="#e4e2dc", lw=0.6)

@@ -24,7 +24,7 @@ from sionna_twin_ops.search import (
 def test_grids_match_the_spec() -> None:
     assert len(TRACE_TILTS_DEG) == 13 and TRACE_TILTS_DEG[-1] == 12.0
     assert len(SURROGATE_TILTS_DEG) == 25 and SURROGATE_TILTS_DEG[1] == 0.5
-    assert tuple(float(p) for p in range(37, 47)) == POWERS_DBM
+    assert tuple(float(p) for p in range(28, 47)) == POWERS_DBM
 
 
 def test_threshold_agrees_with_the_evaluation_at_43_dbm() -> None:
@@ -47,15 +47,17 @@ def test_the_first_radius_is_beyond_the_map_and_the_revised_one_inside() -> None
     assert not radius_beyond_map(RADIUS_M)
 
 
-def test_objective_counts_near_cover_minus_spill() -> None:
+def test_objective_is_covered_fraction_inside_minus_outside() -> None:
     gain = np.array([-100.0, -124.0, -100.0, -200.0])
     has_power = np.array([True, True, True, False])
     near = np.array([True, True, False, False])
     values = objectives(gain, has_power, near)
     at_43 = POWERS_DBM.index(43.0)
     at_46 = POWERS_DBM.index(46.0)
-    assert values[at_43] == 1 - 1  # -124 dB is not covered at 43 dBm (needs -122.2)
-    assert values[at_46] == 2 - 1  # it is at 46 dBm (needs -125.2)
+    assert values[at_43] == pytest.approx(1 / 2 - 1 / 2)  # -124 dB needs 46 dBm (-125.2)
+    assert values[at_46] == pytest.approx(2 / 2 - 1 / 2)
+    with pytest.raises(ValueError, match="non-empty"):
+        objectives(gain, has_power, np.ones(4, dtype=bool))
 
 
 def test_ties_go_to_the_first_in_c_order() -> None:
@@ -66,8 +68,8 @@ def test_ties_go_to_the_first_in_c_order() -> None:
 
 def test_choices_and_the_trace_plan() -> None:
     grid = np.zeros((len(AZIMUTHS_DEG), len(SURROGATE_TILTS_DEG), len(POWERS_DBM)))
-    grid[:, 3, 9] = 1.0  # every azimuth: tilt 1.5, 46 dBm
-    grid[2, 4, 9] = 2.0  # azimuth 90: tilt 2.0 is the whole-grid best
+    grid[:, 3, -1] = 1.0  # every azimuth: tilt 1.5, 46 dBm
+    grid[2, 4, -1] = 2.0  # azimuth 90: tilt 2.0 is the whole-grid best
     record = {"objectives": {"0": {"52": grid.tolist()}}}
     choices = surrogate_choices(record)
     assert choices["cases"]["0"]["52/0"] == [1.5, 46.0]
@@ -96,12 +98,12 @@ def test_cpu_raytracer_medians_are_quoted_from_the_committed_evaluation() -> Non
     assert first > 1.0 and further > 1.0
 
 
-def test_share_row_counts_cases_within_one_percent() -> None:
-    from sionna_twin_ops.search import _share_row
+def test_shortfall_row_counts_cases_within_one_point() -> None:
+    from sionna_twin_ops.search import _shortfall_row
 
-    row = _share_row("x", [1.0, 0.995, 0.98, 1.02])
-    assert row.startswith("| x | 0.9975 |")
-    assert row.endswith("| 0.9800 | 3 of 4 |")
+    row = _shortfall_row("x", [0.0, 0.005, 0.02, -0.001])
+    assert row.startswith("| x | 0.0025 |")
+    assert row.endswith("| 0.0200 | 3 of 4 |")
 
 
 def test_terrain_objectives_read_every_search_map(tmp_path: Path) -> None:
@@ -118,4 +120,4 @@ def test_terrain_objectives_read_every_search_map(tmp_path: Path) -> None:
     near = np.array([[True, True], [False, False]])
     values = terrain_objectives([first, second], 52, near)
     assert set(values) == {(90.0, 4.5), (90.0, 4.5346), (90.0, 2.5)}
-    assert values[(90.0, 4.5)][-1] == 2 - 2  # the first directory's map: covered everywhere
+    assert values[(90.0, 4.5)][-1] == 1 - 1  # the first directory's map: covered everywhere
