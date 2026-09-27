@@ -120,6 +120,59 @@ def solver_check(variant: str, seed: int, out_dir: Path) -> None:
     sys.stdout.write(report)
 
 
+def evaluate_command(args: argparse.Namespace) -> None:
+    """Run `twin evaluate`: score a split, time both methods, write the report and figure.
+
+    Args:
+        args: Parsed arguments of the evaluate command.
+
+    Raises:
+        RuntimeError: If PyTorch sees no CUDA device (the timing needs the GPU).
+    """
+    import torch
+
+    from sionna_twin_ops.backend import select_variant
+
+    if not torch.cuda.is_available():
+        raise RuntimeError("twin evaluate times the surrogate on the GPU; none is visible")
+    select_variant(args.variant)
+    from sionna_twin_ops import evaluate
+
+    tallies, facts = evaluate.evaluate_split(
+        args.dataset, args.split, args.runs, torch.device("cuda")
+    )
+    uncertainty = evaluate.quoted_uncertainty(args.fold_report)
+    timing = evaluate.measure_timing(
+        args.dataset,
+        args.split,
+        args.runs[0],
+        args.gpu_timing,
+        args.cpu_timing_terrains,
+        args.cpu_further_maps,
+    )
+    median, p95 = evaluate.backend_agreement(args.backend_report)
+    report = evaluate.report_markdown(tallies, facts, uncertainty, timing)
+    (args.out_dir / "figures").mkdir(parents=True, exist_ok=True)
+    (args.out_dir / f"evaluation_{args.split}.md").write_text(report, newline="\n")
+    caption = (
+        f"Synthetic terrain, {args.split} split; propagation: "
+        f"{'; '.join(facts['ray tracing'])} (llvm-equivalent: median {median:.3f} and p95 "
+        f"{p95:.3f} dB, backend_check.md); pattern: 3GPP TR 38.901. "
+        f"Azimuth {evaluate.FIGURE_AZIMUTH_DEG:.0f} deg, tilt {evaluate.FIGURE_TILT_DEG:.0f} "
+        f"deg; surrogate: {args.runs[0]}. All rows share one path-gain scale (-150 to -60 dB) "
+        f"and one error scale (clipped at +-{evaluate.ERROR_LIMIT_DB:.0f} dB). Clear cells: no "
+        "traced power (left, right) or no predicted power (middle)."
+    )
+    evaluate.evaluation_figure(
+        args.dataset,
+        args.split,
+        args.runs[0],
+        caption,
+        args.out_dir / "figures" / f"evaluation_{args.split}.jpg",
+    )
+    sys.stdout.write(report)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="twin", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -222,6 +275,42 @@ def main(argv: list[str] | None = None) -> int:
     fold_cmd.add_argument("--azimuth", type=float, required=True, help="boresight azimuth in deg")
     fold_cmd.add_argument("--tilt", type=float, required=True, help="electrical tilt in deg")
     fold_cmd.add_argument("--out", type=Path, required=True, help="markdown file to write")
+    eval_cmd = commands.add_parser("evaluate", help="score the surrogate, B0 and B1 on a split")
+    eval_cmd.add_argument("--dataset", type=Path, required=True, help="dataset directory")
+    eval_cmd.add_argument("--split", choices=("validation", "test"), required=True, help="split")
+    eval_cmd.add_argument("--runs", type=Path, nargs="+", required=True, help="training runs")
+    eval_cmd.add_argument(
+        "--fold-report", type=Path, required=True, help="results/fold_check.md to quote"
+    )
+    eval_cmd.add_argument(
+        "--variant", default=DEFAULT_VARIANT, help="Mitsuba variant for the CPU ray-tracer timing"
+    )
+    eval_cmd.add_argument(
+        "--gpu-timing", type=Path, required=True, help="JSON from `twin raytrace-timing` on the GPU"
+    )
+    eval_cmd.add_argument(
+        "--backend-report", type=Path, required=True, help="results/backend_check.md to quote"
+    )
+    eval_cmd.add_argument(
+        "--cpu-timing-terrains", type=int, required=True, help="new terrains timed on the CPU"
+    )
+    eval_cmd.add_argument(
+        "--cpu-further-maps", type=int, required=True, help="further maps timed per terrain"
+    )
+    eval_cmd.add_argument(
+        "--out-dir", type=Path, required=True, help="writes evaluation_<split>.md and figures/"
+    )
+    rt_time = commands.add_parser(
+        "raytrace-timing", help="time the ray tracer end to end on new terrains (JSON)"
+    )
+    rt_time.add_argument(
+        "--variant", default=DEFAULT_VARIANT, help=f"Mitsuba variant (default {DEFAULT_VARIANT})"
+    )
+    rt_time.add_argument("--dataset", type=Path, required=True, help="dataset directory")
+    rt_time.add_argument("--split", choices=("validation", "test"), required=True, help="split")
+    rt_time.add_argument("--terrains", type=int, required=True, help="new terrains to time")
+    rt_time.add_argument("--further-maps", type=int, required=True, help="further maps each")
+    rt_time.add_argument("--out", type=Path, required=True, help="JSON file to write")
     args = parser.parse_args(argv)
 
     if args.command == "env":
@@ -324,6 +413,20 @@ def main(argv: list[str] | None = None) -> int:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(report, newline="\n")
         sys.stdout.write(report)
+        return 0
+    if args.command == "raytrace-timing":
+        from sionna_twin_ops.backend import select_variant
+
+        select_variant(args.variant)
+        from sionna_twin_ops.crosscheck import raytracer_timing
+
+        record = raytracer_timing(args.dataset, args.split, args.terrains, args.further_maps)
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(json.dumps(record, indent=1), newline="\n")
+        sys.stdout.write(json.dumps(record, indent=1) + "\n")
+        return 0
+    if args.command == "evaluate":
+        evaluate_command(args)
         return 0
     raise AssertionError(f"unhandled command {args.command!r}")
 
