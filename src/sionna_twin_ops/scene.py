@@ -3,6 +3,8 @@
 Both meshes are built in memory from the heightmap; no scene file is read or written.
 """
 
+from typing import Literal
+
 import numpy as np
 from numpy.typing import NDArray
 
@@ -10,6 +12,11 @@ from sionna_twin_ops.antenna import CARRIER_HZ, NUM_ROWS, VERTICAL_SPACING_WL, y
 from sionna_twin_ops.sionna_rt import mi, rt
 from sionna_twin_ops.site import MAP_CELL_M, MAP_CELLS, SURFACE_HEIGHT_M, Site
 from sionna_twin_ops.terrain import Terrain
+
+type Fold = Literal["sw-ne", "nw-se"]
+# The dataset's mesh splits every cell along its SW-NE diagonal; the traced maps depend on
+# that choice (spec N3b, `twin fold-check`).
+DATASET_FOLD: Fold = "sw-ne"
 
 GROUND_MATERIAL = "medium_dry_ground"  # ASSUMPTION (spec T4): one ITU material everywhere
 # ASSUMPTION: Sionna models a material as a slab; 10 m of medium dry ground at 1.8 GHz is
@@ -42,16 +49,18 @@ def receiver_array() -> rt.PlanarArray:
     return rt.PlanarArray(num_rows=1, num_cols=1, pattern="iso", polarization="V")
 
 
-def grid_faces(rows: int, cols: int) -> NDArray[np.uint32]:
+def grid_faces(rows: int, cols: int, fold: Fold) -> NDArray[np.uint32]:
     """Two triangles per cell of a vertex grid, row-major by cell.
 
-    Cell (r, c) has vertices (r, c), (r, c+1), (r+1, c), (r+1, c+1) and is split along the
-    diagonal from (r, c) to (r+1, c+1). Its triangles are faces 2 * (r * (cols - 1) + c)
+    Cell (r, c) has vertices (r, c), (r, c+1), (r+1, c), (r+1, c+1), row r to the south of
+    row r+1. "sw-ne" splits it along the diagonal from (r, c) to (r+1, c+1), "nw-se" along
+    the one from (r+1, c) to (r, c+1). Its triangles are faces 2 * (r * (cols - 1) + c)
     and the one after, both counter-clockwise seen from above.
 
     Args:
         rows: Vertex rows.
         cols: Vertex columns.
+        fold: Which diagonal splits each cell.
 
     Returns:
         Face indices, shape (2 * (rows - 1) * (cols - 1), 3).
@@ -61,13 +70,21 @@ def grid_faces(rows: int, cols: int) -> NDArray[np.uint32]:
     v01 = v00 + 1
     v10 = v00 + cols
     v11 = v10 + 1
-    first = np.stack([v00, v01, v11], axis=1)
-    second = np.stack([v00, v11, v10], axis=1)
+    if fold == "sw-ne":
+        first = np.stack([v00, v01, v11], axis=1)
+        second = np.stack([v00, v11, v10], axis=1)
+    else:
+        first = np.stack([v00, v01, v10], axis=1)
+        second = np.stack([v01, v11, v10], axis=1)
     return np.stack([first, second], axis=1).reshape(-1, 3).astype(np.uint32)
 
 
 def grid_mesh(
-    name: str, x: NDArray[np.float64], y: NDArray[np.float64], z: NDArray[np.float64]
+    name: str,
+    x: NDArray[np.float64],
+    y: NDArray[np.float64],
+    z: NDArray[np.float64],
+    fold: Fold,
 ) -> mi.Mesh:
     """A triangle mesh over a regular vertex grid.
 
@@ -76,13 +93,14 @@ def grid_mesh(
         x: Vertex x coordinates along columns.
         y: Vertex y coordinates along rows.
         z: Vertex heights, shape (len(y), len(x)).
+        fold: Which diagonal splits each cell.
 
     Returns:
         The Mitsuba mesh.
     """
     xx, yy = np.meshgrid(x, y)
     vertices = np.stack([xx.ravel(), yy.ravel(), z.ravel()], axis=1).astype(np.float32)
-    faces = grid_faces(len(y), len(x))
+    faces = grid_faces(len(y), len(x), fold)
     mesh = mi.Mesh(name, len(vertices), len(faces))
     params = mi.traverse(mesh)
     params["vertex_positions"] = mi.Float(vertices.ravel())
@@ -91,19 +109,20 @@ def grid_mesh(
     return mesh
 
 
-def terrain_mesh(terrain: Terrain) -> mi.Mesh:
+def terrain_mesh(terrain: Terrain, fold: Fold) -> mi.Mesh:
     """The whole terrain tile as one mesh, no walls or skirts (spec T6).
 
     Args:
         terrain: The terrain.
+        fold: Which diagonal splits each cell.
 
     Returns:
         The mesh.
     """
-    return grid_mesh("terrain", terrain.coords_m, terrain.coords_m, terrain.heights_m)
+    return grid_mesh("terrain", terrain.coords_m, terrain.coords_m, terrain.heights_m, fold)
 
 
-def measurement_surface(terrain: Terrain, site: Site) -> mi.Mesh:
+def measurement_surface(terrain: Terrain, site: Site, fold: Fold) -> mi.Mesh:
     """The map's measurement surface: 1.5 m above ground, two triangles per cell (spec S4).
 
     Cell corners sit on terrain vertices, so the map grid spacing must be a whole multiple
@@ -113,6 +132,7 @@ def measurement_surface(terrain: Terrain, site: Site) -> mi.Mesh:
     Args:
         terrain: The terrain.
         site: The map centre.
+        fold: Which diagonal splits each cell.
 
     Returns:
         The mesh.
@@ -136,16 +156,17 @@ def measurement_surface(terrain: Terrain, site: Site) -> mi.Mesh:
     ):
         raise ValueError("map grid is not centred on the site")
     z = terrain.heights_m[rows, cols] + SURFACE_HEIGHT_M
-    return grid_mesh("measurement-surface", x, y, z)
+    return grid_mesh("measurement-surface", x, y, z, fold)
 
 
-def build_scene(terrain: Terrain, site: Site, azimuth_deg: float) -> rt.Scene:
+def build_scene(terrain: Terrain, site: Site, azimuth_deg: float, fold: Fold) -> rt.Scene:
     """Terrain plus one sector transmitter at the site, boresight at `azimuth_deg`.
 
     Args:
         terrain: The terrain.
         site: Where the mast stands; the antenna is at `site.antenna_m`.
         azimuth_deg: Boresight azimuth, clockwise from true north.
+        fold: Which diagonal splits each terrain cell.
 
     Returns:
         The scene, ready for the radio map solver.
@@ -154,7 +175,9 @@ def build_scene(terrain: Terrain, site: Site, azimuth_deg: float) -> rt.Scene:
     scene.frequency = CARRIER_HZ
     material = rt.ITURadioMaterial("ground", GROUND_MATERIAL, thickness=GROUND_THICKNESS_M)
     scene.edit(
-        add=rt.SceneObject(mi_mesh=terrain_mesh(terrain), name="terrain", radio_material=material)
+        add=rt.SceneObject(
+            mi_mesh=terrain_mesh(terrain, fold), name="terrain", radio_material=material
+        )
     )
     scene.tx_array = sector_array()
     scene.rx_array = receiver_array()

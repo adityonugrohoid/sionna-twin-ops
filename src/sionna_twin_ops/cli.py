@@ -207,6 +207,15 @@ def main(argv: list[str] | None = None) -> int:
     sym.add_argument("--azimuth", type=float, required=True, help="boresight azimuth in deg")
     sym.add_argument("--tilt", type=float, required=True, help="electrical tilt in deg")
     sym.add_argument("--out", type=Path, required=True, help="markdown file to write")
+    fold_cmd = commands.add_parser(
+        "fold-check", help="fold term beside the sampling floor on training terrains"
+    )
+    fold_cmd.add_argument(
+        "--variant", default=DEFAULT_VARIANT, help=f"Mitsuba variant (default {DEFAULT_VARIANT})"
+    )
+    fold_cmd.add_argument("--azimuth", type=float, required=True, help="boresight azimuth in deg")
+    fold_cmd.add_argument("--tilt", type=float, required=True, help="electrical tilt in deg")
+    fold_cmd.add_argument("--out", type=Path, required=True, help="markdown file to write")
     args = parser.parse_args(argv)
 
     if args.command == "env":
@@ -300,6 +309,17 @@ def main(argv: list[str] | None = None) -> int:
         from sionna_twin_ops.crosscheck import symmetry_check_markdown
 
         report = symmetry_check_markdown(args.terrain_id, args.azimuth, args.tilt)
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(report, newline="\n")
+        sys.stdout.write(report)
+        return 0
+    if args.command == "fold-check":
+        from sionna_twin_ops.backend import select_variant
+
+        select_variant(args.variant)
+        from sionna_twin_ops.crosscheck import fold_check_markdown
+
+        report = fold_check_markdown(args.azimuth, args.tilt)
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(report, newline="\n")
         sys.stdout.write(report)

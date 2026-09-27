@@ -40,7 +40,7 @@ def floor_maps(samples: list[int], seed: int, out: Path) -> dict[str, Any]:
     """
     from sionna_twin_ops.antenna import tilt_weights
     from sionna_twin_ops.provenance import gpu_memory_used_mib, provenance
-    from sionna_twin_ops.scene import build_scene, measurement_surface
+    from sionna_twin_ops.scene import DATASET_FOLD, build_scene, measurement_surface
     from sionna_twin_ops.solve import solve_map, specular_settings
 
     out.mkdir(parents=True, exist_ok=True)
@@ -49,8 +49,8 @@ def floor_maps(samples: list[int], seed: int, out: Path) -> dict[str, Any]:
     for terrain_id in TERRAIN_IDS:
         terrain = generate_terrain(terrain_id, GRID_SPACING_M)
         site = place_site(terrain, site_class_for(terrain_id))
-        scene = build_scene(terrain, site, AZIMUTH_DEG)
-        surface = measurement_surface(terrain, site)
+        scene = build_scene(terrain, site, AZIMUTH_DEG, DATASET_FOLD)
+        surface = measurement_surface(terrain, site, DATASET_FOLD)
         for n in samples:
             settings = specular_settings(n, seed)
             start = time.perf_counter()
@@ -212,7 +212,7 @@ def symmetry_check_markdown(terrain_id: int, azimuth_deg: float, tilt_deg: float
         transform_terrain,
     )
     from sionna_twin_ops.provenance import provenance
-    from sionna_twin_ops.scene import build_scene, measurement_surface
+    from sionna_twin_ops.scene import DATASET_FOLD, build_scene, measurement_surface
     from sionna_twin_ops.solve import DATASET_SAMPLES, solve_map, specular_settings
 
     settings = specular_settings(DATASET_SAMPLES, 1)
@@ -223,8 +223,9 @@ def symmetry_check_markdown(terrain_id: int, azimuth_deg: float, tilt_deg: float
     def trace(k: int, mirror: bool) -> NDArray[np.float64]:
         moved = transform_terrain(crop, k, mirror)
         azimuth = transform_azimuth(azimuth_deg, k, mirror)
-        scene = build_scene(moved, site, azimuth)
-        return solve_map(scene, measurement_surface(moved, site), weights, settings).path_gain
+        scene = build_scene(moved, site, azimuth, DATASET_FOLD)
+        surface = measurement_surface(moved, site, DATASET_FOLD)
+        return solve_map(scene, surface, weights, settings).path_gain
 
     original = trace(0, False)
     lines = [
@@ -265,4 +266,149 @@ def symmetry_check_markdown(terrain_id: int, azimuth_deg: float, tilt_deg: float
             f"{int(((expected > 0) & (traced == 0)).sum())} | "
             f"{int(((expected == 0) & (traced > 0)).sum())} |"
         )
+    return "\n".join(lines) + "\n"
+
+
+FOLD_TERRAIN_IDS = (3, 6, 1, 4, 5, 8)  # two training terrains per site class
+SHADOW_DISTANCE_BINS = ((1.0, 2.0), (2.0, 4.0), (4.0, float("inf")))  # in cells
+
+
+def distance_to_shadow(los: NDArray[np.bool_]) -> NDArray[np.float64]:
+    """Euclidean distance, in cells, from each cell to the nearest non-LOS cell.
+
+    Only non-LOS cells with a line-of-sight 4-neighbour can be nearest (a step towards a
+    lit cell always gets closer), so the search runs over those boundary cells.
+
+    Args:
+        los: LOS mask of a map.
+
+    Returns:
+        Distance per cell; 0 on non-LOS cells, infinite if the map has none.
+    """
+    nlos = ~los
+    padded = np.pad(los, 1, constant_values=False)
+    lit_neighbour = padded[:-2, 1:-1] | padded[2:, 1:-1] | padded[1:-1, :-2] | padded[1:-1, 2:]
+    boundary = np.argwhere(nlos & lit_neighbour).astype(np.float64)
+    distance = np.zeros(los.shape)
+    lit = np.argwhere(los)
+    if len(boundary) == 0:
+        distance[los] = np.inf
+        return distance
+    for start in range(0, len(lit), 2048):
+        chunk = lit[start : start + 2048].astype(np.float64)
+        d = np.sqrt(((chunk[:, None, :] - boundary[None, :, :]) ** 2).sum(-1)).min(axis=1)
+        distance[lit[start : start + 2048, 0], lit[start : start + 2048, 1]] = d
+    return distance
+
+
+def _pooled(
+    pairs: list[tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.bool_]]],
+) -> str:
+    """Median / p95 / max |dB| over cells with power in both maps, pooled over pairs."""
+    diffs = []
+    for a, b, m in pairs:
+        both = m & (a > 0) & (b > 0)
+        diffs.append(np.abs(10.0 * np.log10(a[both]) - 10.0 * np.log10(b[both])))
+    d = np.concatenate(diffs)
+    if d.size == 0:
+        return "- | - | - | 0"
+    return f"{np.median(d):.3f} | {np.percentile(d, 95):.3f} | {d.max():.3f} | {d.size}"
+
+
+def fold_check_markdown(azimuth_deg: float, tilt_deg: float) -> str:
+    """The fold term beside the sampling floor, on training terrains (spec N3b).
+
+    Must run after `backend.select_variant`. Each terrain is traced three times with the
+    dataset's settings: SW-NE fold at DATASET_SAMPLES (the dataset's own map), NW-SE fold
+    at DATASET_SAMPLES (the fold term), and SW-NE at REFERENCE_SAMPLES (the sampling floor).
+
+    Args:
+        azimuth_deg: Boresight azimuth.
+        tilt_deg: Electrical tilt.
+
+    Returns:
+        Markdown text.
+    """
+    from sionna_twin_ops.antenna import tilt_weights
+    from sionna_twin_ops.provenance import provenance
+    from sionna_twin_ops.scene import DATASET_FOLD, build_scene, measurement_surface
+    from sionna_twin_ops.solve import (
+        DATASET_SAMPLES,
+        REFERENCE_SAMPLES,
+        solve_map,
+        specular_settings,
+    )
+
+    weights = tilt_weights(tilt_deg)
+
+    def trace(terrain: Any, site: Any, fold: Any, samples: int) -> NDArray[np.float64]:
+        scene = build_scene(terrain, site, azimuth_deg, fold)
+        surface = measurement_surface(terrain, site, fold)
+        return solve_map(scene, surface, weights, specular_settings(samples, 1)).path_gain
+
+    rows: dict[str, list[tuple[Any, Any, Any, Any, Any]]] = {}
+    for terrain_id in FOLD_TERRAIN_IDS:
+        terrain = generate_terrain(terrain_id, GRID_SPACING_M)
+        site = place_site(terrain, site_class_for(terrain_id))
+        dataset_map = trace(terrain, site, DATASET_FOLD, DATASET_SAMPLES)
+        other_fold = trace(terrain, site, "nw-se", DATASET_SAMPLES)
+        reference = trace(terrain, site, DATASET_FOLD, REFERENCE_SAMPLES)
+        los = los_mask(map_geometry(terrain, site))
+        rows.setdefault(site.site_class, []).append(
+            (dataset_map, other_fold, reference, los, distance_to_shadow(los))
+        )
+        print(f"terrain {terrain_id} ({site.site_class}) traced", flush=True)
+
+    groups = [(name, maps) for name, maps in rows.items()]
+    groups.append(("all", [m for maps in rows.values() for m in maps]))
+    lines = [
+        "# Fold check",
+        "",
+        "Synthetic terrain ids "
+        f"{', '.join(str(i) for i in FOLD_TERRAIN_IDS)} (training terrains, two per site "
+        f"class), azimuth {azimuth_deg:.0f}, tilt {tilt_deg:.0f}; line of sight and specular "
+        f"reflection. The terrain mesh and the measurement surface split every cell into two "
+        "triangles along one diagonal; the dataset uses the SW-NE one. The fold term compares "
+        f"the dataset's SW-NE maps with NW-SE maps at {DATASET_SAMPLES:.0e} rays; the sampling "
+        f"floor compares the same SW-NE maps with {REFERENCE_SAMPLES:.0e} rays. Both are "
+        "absolute dB differences over cells with power in both maps, pooled over the "
+        "terrains of each row. Written by `twin fold-check`.",
+        "",
+        "| provenance | |",
+        "|---|---|",
+        *(f"| {k} | {v} |" for k, v in provenance().items()),
+        "",
+        "## Truth uncertainty: fold term beside the sampling floor",
+        "",
+        "| site class | term | LOS median | LOS p95 | LOS max | LOS cells | NLOS median | "
+        "NLOS p95 | NLOS max | NLOS cells | power only with SW-NE | power only in the other map |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for name, maps in groups:
+        for term, index in (("fold", 1), ("sampling", 2)):
+            one_sided_a = sum(int(((m[0] > 0) & (m[index] == 0)).sum()) for m in maps)
+            one_sided_b = sum(int(((m[0] == 0) & (m[index] > 0)).sum()) for m in maps)
+            lines.append(
+                f"| {name} | {term} | "
+                f"{_pooled([(m[0], m[index], m[3]) for m in maps])} | "
+                f"{_pooled([(m[0], m[index], ~m[3]) for m in maps])} | "
+                f"{one_sided_a} | {one_sided_b} |"
+            )
+    lines += [
+        "",
+        "## Fold term on LOS cells by distance to the nearest shadow cell",
+        "",
+        "Distance is Euclidean, in cells (40 m), from a LOS cell to the nearest non-LOS cell.",
+        "",
+        "| site class | distance (cells) | median | p95 | max | cells |",
+        "|---|---|---|---|---|---|",
+    ]
+    for name, maps in groups:
+        for low, high in SHADOW_DISTANCE_BINS:
+            label = f"{low:.0f} to {high:.0f}" if np.isfinite(high) else f"{low:.0f} or more"
+            lines.append(
+                f"| {name} | {label} | "
+                + _pooled([(m[0], m[1], m[3] & (m[4] >= low) & (m[4] < high)) for m in maps])
+                + " |"
+            )
     return "\n".join(lines) + "\n"

@@ -6,7 +6,12 @@ import pytest
 pytestmark = pytest.mark.sionna
 
 from sionna_twin_ops.antenna import element_heights_wl  # noqa: E402
-from sionna_twin_ops.scene import grid_faces, measurement_surface, sector_array  # noqa: E402
+from sionna_twin_ops.scene import (  # noqa: E402
+    DATASET_FOLD,
+    grid_faces,
+    measurement_surface,
+    sector_array,
+)
 from sionna_twin_ops.site import (  # noqa: E402
     MAP_CELL_M,
     MAP_CELLS,
@@ -23,7 +28,7 @@ def test_numpy_element_heights_match_sionna_array_geometry() -> None:
 
 
 def test_grid_faces_cover_each_cell_with_two_triangles() -> None:
-    faces = grid_faces(3, 4)  # 2 x 3 cells
+    faces = grid_faces(3, 4, "sw-ne")  # 2 x 3 cells
     assert faces.shape == (12, 3)
     # Cell (1, 2): vertices 6, 7, 10, 11; its triangles are faces 10 and 11.
     assert set(faces[10]) | set(faces[11]) == {6, 7, 10, 11}
@@ -33,7 +38,7 @@ def test_grid_faces_cover_each_cell_with_two_triangles() -> None:
 def test_measurement_surface_follows_the_terrain_over_the_map() -> None:
     terrain = generate_terrain(3, 40.0)
     site = place_site(terrain, site_class_for(3))
-    mesh = measurement_surface(terrain, site)
+    mesh = measurement_surface(terrain, site, DATASET_FOLD)
     assert mesh.face_count() == 2 * MAP_CELLS * MAP_CELLS
     v = np.asarray(mesh.vertex_positions_buffer().numpy()).reshape(-1, 3)
     n = MAP_CELLS + 1

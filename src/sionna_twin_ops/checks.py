@@ -9,6 +9,7 @@ from numpy.typing import NDArray
 from sionna_twin_ops.antenna import CARRIER_HZ, tilt_weights, yaw_for_azimuth
 from sionna_twin_ops.baselines import los_mask, map_geometry
 from sionna_twin_ops.scene import (
+    DATASET_FOLD,
     build_scene,
     measurement_surface,
     receiver_array,
@@ -193,8 +194,8 @@ def tilt_check(settings: SolverSettings, lobe_samples: int) -> list[TiltRow]:
         One row per tilt.
     """
     terrain, site = flat_terrain(), centre_site()
-    scene = build_scene(terrain, site, CHECK_AZIMUTH_DEG)
-    surface = measurement_surface(terrain, site)
+    scene = build_scene(terrain, site, CHECK_AZIMUTH_DEG, DATASET_FOLD)
+    surface = measurement_surface(terrain, site, DATASET_FOLD)
     mask = far_field_mask()
     rows = []
     for tilt in TILTS_DEG:
@@ -340,8 +341,8 @@ def surface_check(settings: SolverSettings, tilt_deg: float) -> SurfaceCheck:
         The three comparisons.
     """
     terrain, site = flat_terrain(), centre_site()
-    scene = build_scene(terrain, site, CHECK_AZIMUTH_DEG)
-    surface = measurement_surface(terrain, site)
+    scene = build_scene(terrain, site, CHECK_AZIMUTH_DEG, DATASET_FOLD)
+    surface = measurement_surface(terrain, site, DATASET_FOLD)
     weights = tilt_weights(tilt_deg)
     reseeded = replace(settings, seed=settings.seed + 1)
     mesh_a = solve_map(scene, surface, weights, settings).path_gain
@@ -407,8 +408,8 @@ def sampling_floor(seed: int) -> list[FloorRow]:
     for terrain_id in FLOOR_TERRAIN_IDS:
         terrain = generate_terrain(terrain_id, GRID_SPACING_M)
         site = place_site(terrain, site_class_for(terrain_id))
-        scene = build_scene(terrain, site, CHECK_AZIMUTH_DEG)
-        surface = measurement_surface(terrain, site)
+        scene = build_scene(terrain, site, CHECK_AZIMUTH_DEG, DATASET_FOLD)
+        surface = measurement_surface(terrain, site, DATASET_FOLD)
         results = [
             solve_map(scene, surface, weights, specular_settings(samples, seed))
             for samples in FLOOR_SAMPLES
