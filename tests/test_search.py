@@ -67,3 +67,12 @@ def test_choices_and_the_trace_plan() -> None:
     assert plan["52/0"] == [1.5, 4.5346]
     assert plan["52/90"] == [4.5346]  # 2.0 is on the 1 deg grid already
     assert len(plan) == len(AZIMUTHS_DEG)
+
+
+def test_search_map_names_keep_the_rule_tilt_apart_from_a_half_degree() -> None:
+    from sionna_twin_ops.search import search_map_name
+
+    assert search_map_name(52, 90.0, 4.5) == "t052_a090_t04.5000.npy"
+    assert search_map_name(52, 90.0, 4.5346) == "t052_a090_t04.5346.npy"
+    with pytest.raises(ValueError, match="1e-4"):
+        search_map_name(52, 90.0, 4.53461)

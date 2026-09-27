@@ -19,7 +19,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from sionna_twin_ops.antenna import array_gain_db, tilt_weights
-from sionna_twin_ops.dataset import AZIMUTHS_DEG, map_name, read_manifest
+from sionna_twin_ops.dataset import AZIMUTHS_DEG, read_manifest
 from sionna_twin_ops.site import MAST_HEIGHT_M, Site
 from sionna_twin_ops.terrain import GRID_SPACING_M, generate_terrain
 
@@ -34,6 +34,26 @@ RSRP_THRESHOLD_DBM = -110.0  # ASSUMPTION (spec E2), as in evaluate.py
 NEAR_OPTIMUM = 0.99  # "within 1% of the optimum"
 HPBW_STEP_DEG = 1e-4
 META = "meta.json"
+
+
+def search_map_name(terrain_id: int, azimuth_deg: float, tilt_deg: float) -> str:
+    """File name of one search map, tilt to 1e-4 deg (the dataset's names round to 0.1 deg,
+    which would put the rule of thumb's 4.5346 deg and a chosen 4.5 deg in one file).
+
+    Args:
+        terrain_id: Terrain id.
+        azimuth_deg: Azimuth.
+        tilt_deg: Tilt.
+
+    Returns:
+        The file name, e.g. t052_a090_t04.5346.npy.
+
+    Raises:
+        ValueError: If the tilt is not a multiple of 1e-4 deg.
+    """
+    if abs(round(tilt_deg, 4) - tilt_deg) > 1e-9:
+        raise ValueError(f"tilt {tilt_deg} is not a multiple of 1e-4 deg")
+    return f"t{terrain_id:03d}_a{azimuth_deg:03.0f}_t{tilt_deg:07.4f}.npy"
 
 
 def covered_gain_db(power_dbm: float) -> float:
@@ -296,7 +316,7 @@ def trace_search(
     maps_dir.mkdir(parents=True, exist_ok=True)
 
     def save(terrain_id: int, azimuth: float, tilt: float, gain: NDArray[np.float64]) -> None:
-        name = map_name(terrain_id, azimuth, tilt)
+        name = search_map_name(terrain_id, azimuth, tilt)
         partial = maps_dir / f"{name}.partial"
         with partial.open("wb") as handle:
             np.save(handle, gain.astype(np.float32))
