@@ -90,7 +90,9 @@ def test_reflection_note_follows_the_numbers() -> None:
     tally = Tally()
     tally.errors[("all", "LOS reflection")] = [np.array([-3.0, -2.0], dtype=np.float32)]
     tally.errors[("hilltop", "LOS reflection")] = [np.array([2.0, 4.0], dtype=np.float32)]
-    fold = {("hilltop", "LOS reflection"): {"fold": (1.0, 3.0), "sampling": (0.0, 0.1)}}
+    fold: dict[tuple[str, str], dict[str, tuple[float, ...]]] = {
+        ("hilltop", "LOS reflection"): {"fold": (1.0, 3.0), "sampling": (0.0, 0.1)}
+    }
     note = reflection_note({"seed 0": tally}, ["seed 0"], Uncertainty("abc1234", fold))
     assert "underpredicts (bias -2.5 dB)" in note
     assert "(3.00 dB) is above the fold term's median (1.00 dB)" in note
