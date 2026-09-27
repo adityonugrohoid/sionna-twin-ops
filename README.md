@@ -1,13 +1,13 @@
 # sionna-twin-ops
 
-A learned surrogate of a ray tracer for one radio sector on hilly terrain. NVIDIA Sionna RT
-computes path-gain maps over procedurally generated hills, slopes and valleys; a small
-U-Net learns to predict those maps on terrain it has never seen, and a tilt and power search
-uses it in place of the ray tracer. It is for radio and machine-learning engineers who want
-to see how far such a surrogate can be trusted, and at what cost. What sets it apart is that
-every surrogate number is shown beside two classic propagation baselines and the ray
-tracer's own uncertainty, on held-out terrain. The terrain is synthetic, generated from seeds:
-no real place, operator or network.
+A learned surrogate of a ray tracer for one radio sector on synthetic hilly terrain,
+generated from seeds (no real place, operator or network). NVIDIA Sionna RT computes
+path-gain maps over procedurally generated hills, slopes and valleys; a small U-Net learns
+to predict those maps on terrain it has never seen, and a tilt and power search uses it in
+place of the ray tracer. It is for radio and machine-learning engineers who want to see how
+far such a surrogate can be trusted, and at what cost. What sets it apart is that every
+surrogate number is shown beside two classic propagation baselines and the ray tracer's own
+uncertainty, on held-out terrain.
 
 ## Quickstart
 
