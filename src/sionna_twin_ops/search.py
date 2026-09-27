@@ -417,29 +417,24 @@ def trace_search(
     return meta
 
 
-_CPU_ROW = re.compile(r"^\| CPU \| (new terrain, first map|each further map) \| ([\d.]+) \|")
-
-
 def cpu_raytracer_seconds(evaluation_report: Path) -> tuple[float, float]:
     """The CPU ray tracer's measured medians, quoted from the committed evaluation report.
 
     Args:
-        evaluation_report: results/evaluation_test.md.
+        evaluation_report: results/evaluation_test.md (its data, the .json, is read).
 
     Returns:
         (new terrain first map, each further map) in seconds.
 
     Raises:
-        ValueError: If the report lacks either row.
+        ValueError: If the report is not an evaluation.
     """
-    rows = {
-        m.group(1): float(m.group(2))
-        for line in evaluation_report.read_text().splitlines()
-        if (m := _CPU_ROW.match(line))
-    }
-    if len(rows) != 2:
-        raise ValueError(f"{evaluation_report} lacks the CPU ray tracer rows")
-    return rows["new terrain, first map"], rows["each further map"]
+    from sionna_twin_ops.reports import read_report
+
+    data = read_report(evaluation_report)
+    if data["kind"] != "evaluation":
+        raise ValueError(f"{evaluation_report} is a {data['kind']} report, not an evaluation")
+    return float(data["timing"]["rt_cpu_new"]), float(data["timing"]["rt_cpu_further"])
 
 
 def traced_objectives(
@@ -1134,3 +1129,85 @@ def search_figure(scores: Scores, caption: str, path: Path) -> None:
     fig.text(0.01, -0.02, caption, fontsize=7.5, color="#52514e", ha="left", va="top", wrap=True)
     fig.savefig(path, dpi=110, bbox_inches="tight", pil_kwargs={"quality": 88})
     plt.close(fig)
+
+
+def report_data(
+    split: str,
+    scores: Scores,
+    plan: dict[str, Any],
+    first_objective: list[str],
+    surrogate: dict[str, dict[str, Any]],
+    trace_meta: dict[str, Any],
+    agreement: tuple[int, int, float],
+    cpu_seconds: tuple[float, float],
+    site_classes: dict[str, str],
+) -> dict[str, Any]:
+    """The search report's data: everything `report_markdown` reads, JSON-safe.
+
+    The surrogate records keep their timings and provenance, not their objective arrays;
+    the trace record keeps its settings, provenance, sites and per-terrain seconds.
+
+    Args:
+        split: The split searched.
+        scores: Output of `score` under the plan.
+        plan: plan.json of `twin search-surrogate`.
+        first_objective: Lines of `first_objective_section` (test), or none (validation).
+        surrogate: {"cpu": record, "cuda": record} of `surrogate_search`.
+        trace_meta: meta.json of the timed `trace_search`.
+        agreement: Output of `dataset_agreement`.
+        cpu_seconds: Output of `cpu_raytracer_seconds`.
+        site_classes: Site class per terrain.
+
+    Returns:
+        Data for `report_markdown_from_data`.
+    """
+    return {
+        "kind": "search",
+        "split": split,
+        "scores": asdict(scores),
+        "plan": plan,
+        "first_objective": first_objective,
+        "surrogate": {
+            device: {k: v for k, v in record.items() if k != "objectives"}
+            for device, record in surrogate.items()
+        },
+        "trace_meta": {
+            k: trace_meta[k] for k in ("settings", "provenance", "sites", "terrain_seconds")
+        },
+        "agreement": list(agreement),
+        "cpu_seconds": list(cpu_seconds),
+        "site_classes": site_classes,
+    }
+
+
+def report_markdown_from_data(data: dict[str, Any]) -> str:
+    """The search report rendered from `report_data`.
+
+    Args:
+        data: Output of `report_data` (or its JSON).
+
+    Returns:
+        Markdown.
+    """
+    s = data["scores"]
+    scores = Scores(
+        optimum={k: tuple(v) for k, v in s["optimum"].items()},
+        whole_optimum={k: tuple(v) for k, v in s["whole_optimum"].items()},
+        shortfalls=s["shortfalls"],
+        whole_shortfalls=s["whole_shortfalls"],
+        cells={k: tuple(v) for k, v in s["cells"].items()},
+        chosen={n: {k: tuple(v) for k, v in c.items()} for n, c in s["chosen"].items()},
+    )
+    first, further = data["cpu_seconds"]
+    compared, identical, worst = data["agreement"]
+    return report_markdown(
+        data["split"],
+        scores,
+        data["plan"],
+        data["first_objective"],
+        data["surrogate"],
+        data["trace_meta"],
+        (compared, identical, worst),
+        (first, further),
+        data["site_classes"],
+    )

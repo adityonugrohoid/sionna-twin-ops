@@ -11,8 +11,9 @@ import torch
 from sionna_twin_ops.dataset import MANIFEST, map_name, select_terrains
 from sionna_twin_ops.features import INPUT_CHANNELS, map_inputs, targets, terrain_features
 from sionna_twin_ops.model import UNet, parameter_count
+from sionna_twin_ops.reports import render
 from sionna_twin_ops.terrain import generate_terrain
-from sionna_twin_ops.train import losses, train, training_summary_markdown
+from sionna_twin_ops.train import losses, train, training_summary_data
 
 
 def test_unet_is_under_ten_million_parameters_with_two_heads() -> None:
@@ -82,7 +83,7 @@ def test_training_writes_weights_and_a_record(tmp_path: Path) -> None:
     assert record["maps"] == {"train": 2, "validation": 2}
     assert record["best"]["epoch"] in (1, 2)
     assert len(record["history"]) == 2
-    report = training_summary_markdown([tmp_path / "run"], [tmp_path / "run"])
+    report = render(training_summary_data([tmp_path / "run"], [tmp_path / "run"]))
     assert "| 0 | " in report
     assert "Context: earlier runs, quoted" in report
     assert record["hyperparameters"]["augmentation"] == "symmetry"

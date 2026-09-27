@@ -16,9 +16,10 @@ from sionna_twin_ops.dataset import (
     read_manifest,
     select_terrains,
     selection_for,
-    summary_markdown,
+    summary_data,
     sweep,
 )
+from sionna_twin_ops.reports import render
 from sionna_twin_ops.site import SITE_CLASSES, NoSiteError, place_site, site_class_for
 from sionna_twin_ops.terrain import generate_terrain
 
@@ -89,7 +90,7 @@ def test_sweep_resumes_and_refuses_mixed_settings(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="made with"):
         sweep(tmp_path, (entry,), 2 * 10**5, 1)
 
-    report = summary_markdown(tmp_path, "v1")
+    report = render(summary_data(tmp_path, "v1"))
     assert "Maps in the manifest: 40 of 2454 expected; 2414 not yet traced." in report
 
     (tmp_path / "maps" / lines[0]["file"]).unlink()
@@ -107,7 +108,7 @@ def test_summary_refuses_mixed_settings(tmp_path: Path) -> None:
     other = dict(line, file=map_name(1, 0.0, 3.0), settings={"samples_per_tx": 2})
     (tmp_path / MANIFEST).write_text(json.dumps(line) + "\n" + json.dumps(other) + "\n")
     with pytest.raises(ValueError, match="mixes"):
-        summary_markdown(tmp_path, "v1")
+        summary_data(tmp_path, "v1")
 
 
 def test_v2_adds_28_training_terrains_per_class_after_the_v1_walk() -> None:

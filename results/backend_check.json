@@ -1,0 +1,252 @@
+{
+ "kind": "backend_check",
+ "terrain_ids": [
+  3,
+  1,
+  5
+ ],
+ "azimuth_deg": 90.0,
+ "tilt_deg": 6.0,
+ "reference_provenance": {
+  "commit": "474693ab941ae645936633955c27bbeb9ed03ee2",
+  "variant": "llvm_ad_mono_polarized",
+  "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+  "python": "3.13.12",
+  "sionna-rt": "2.1.0",
+  "mitsuba": "3.9.1",
+  "drjit": "1.5.0",
+  "numpy": "2.5.3",
+  "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU, driver 616.56"
+ },
+ "candidate_provenance": {
+  "commit": "474693ab941ae645936633955c27bbeb9ed03ee2",
+  "variant": "cuda_ad_mono_polarized",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "python": "3.13.12",
+  "sionna-rt": "2.1.0",
+  "mitsuba": "3.9.1",
+  "drjit": "1.5.0",
+  "numpy": "2.5.3",
+  "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU, driver 616.56"
+ },
+ "agreement": [
+  {
+   "terrain_id": 3,
+   "samples": 10000000,
+   "los": {
+    "median": 4.860158284714089e-07,
+    "p95": 3.7845852808970893e-06,
+    "max": 0.48277857807596547,
+    "cells": 5602
+   },
+   "nlos": {
+    "median": 3.7896332116815756e-07,
+    "p95": 1.5568748210625927e-06,
+    "max": 0.0007992999928205791,
+    "cells": 801
+   },
+   "power_only_reference": 0,
+   "power_only_candidate": 0
+  },
+  {
+   "terrain_id": 3,
+   "samples": 100000000,
+   "los": {
+    "median": 1.083090012343746e-06,
+    "p95": 0.0002232396786993714,
+    "max": 0.08292142796756252,
+    "cells": 5608
+   },
+   "nlos": {
+    "median": 4.276741449871224e-07,
+    "p95": 2.719042952037396e-06,
+    "max": 0.22737088919306814,
+    "cells": 900
+   },
+   "power_only_reference": 0,
+   "power_only_candidate": 0
+  },
+  {
+   "terrain_id": 1,
+   "samples": 10000000,
+   "los": {
+    "median": 5.430330674016659e-07,
+    "p95": 8.24580966707345e-06,
+    "max": 0.4518396333493513,
+    "cells": 2233
+   },
+   "nlos": {
+    "median": 3.5927784125533435e-07,
+    "p95": 1.610558915388083e-06,
+    "max": 9.652152670014402e-06,
+    "cells": 564
+   },
+   "power_only_reference": 0,
+   "power_only_candidate": 0
+  },
+  {
+   "terrain_id": 1,
+   "samples": 100000000,
+   "los": {
+    "median": 1.1874894454422247e-06,
+    "p95": 0.00026059247388943163,
+    "max": 0.2728349325832795,
+    "cells": 2236
+   },
+   "nlos": {
+    "median": 5.287545405963101e-07,
+    "p95": 3.9072232652870295e-06,
+    "max": 0.04553313530924186,
+    "cells": 628
+   },
+   "power_only_reference": 0,
+   "power_only_candidate": 0
+  },
+  {
+   "terrain_id": 5,
+   "samples": 10000000,
+   "los": {
+    "median": 5.858998122221237e-07,
+    "p95": 3.090682332640429e-06,
+    "max": 0.35962300798330205,
+    "cells": 6095
+   },
+   "nlos": {
+    "median": 5.558977562714063e-07,
+    "p95": 3.1078211989665736e-06,
+    "max": 0.0001390481323255699,
+    "cells": 844
+   },
+   "power_only_reference": 0,
+   "power_only_candidate": 0
+  },
+  {
+   "terrain_id": 5,
+   "samples": 100000000,
+   "los": {
+    "median": 9.281946518058248e-07,
+    "p95": 8.668431604519355e-06,
+    "max": 0.035108303817949604,
+    "cells": 6111
+   },
+   "nlos": {
+    "median": 6.063765027874979e-07,
+    "p95": 2.7876434714357854e-06,
+    "max": 0.07141030193182019,
+    "cells": 970
+   },
+   "power_only_reference": 0,
+   "power_only_candidate": 0
+  }
+ ],
+ "timing": [
+  {
+   "reference": {
+    "terrain_id": 3,
+    "samples": 10000000,
+    "cold_s": 0.352,
+    "warm_s": 0.344,
+    "repeat_identical": false,
+    "gpu_memory_mib": 703
+   },
+   "candidate": {
+    "terrain_id": 3,
+    "samples": 10000000,
+    "cold_s": 0.381,
+    "warm_s": 0.099,
+    "repeat_identical": false,
+    "gpu_memory_mib": 835
+   }
+  },
+  {
+   "reference": {
+    "terrain_id": 3,
+    "samples": 100000000,
+    "cold_s": 2.893,
+    "warm_s": 2.913,
+    "repeat_identical": false,
+    "gpu_memory_mib": 703
+   },
+   "candidate": {
+    "terrain_id": 3,
+    "samples": 100000000,
+    "cold_s": 0.295,
+    "warm_s": 0.119,
+    "repeat_identical": false,
+    "gpu_memory_mib": 835
+   }
+  },
+  {
+   "reference": {
+    "terrain_id": 1,
+    "samples": 10000000,
+    "cold_s": 0.364,
+    "warm_s": 0.355,
+    "repeat_identical": false,
+    "gpu_memory_mib": 703
+   },
+   "candidate": {
+    "terrain_id": 1,
+    "samples": 10000000,
+    "cold_s": 0.016,
+    "warm_s": 0.013,
+    "repeat_identical": false,
+    "gpu_memory_mib": 867
+   }
+  },
+  {
+   "reference": {
+    "terrain_id": 1,
+    "samples": 100000000,
+    "cold_s": 3.286,
+    "warm_s": 3.292,
+    "repeat_identical": false,
+    "gpu_memory_mib": 703
+   },
+   "candidate": {
+    "terrain_id": 1,
+    "samples": 100000000,
+    "cold_s": 0.101,
+    "warm_s": 0.102,
+    "repeat_identical": false,
+    "gpu_memory_mib": 867
+   }
+  },
+  {
+   "reference": {
+    "terrain_id": 5,
+    "samples": 10000000,
+    "cold_s": 0.324,
+    "warm_s": 0.309,
+    "repeat_identical": false,
+    "gpu_memory_mib": 703
+   },
+   "candidate": {
+    "terrain_id": 5,
+    "samples": 10000000,
+    "cold_s": 0.013,
+    "warm_s": 0.011,
+    "repeat_identical": false,
+    "gpu_memory_mib": 867
+   }
+  },
+  {
+   "reference": {
+    "terrain_id": 5,
+    "samples": 100000000,
+    "cold_s": 2.862,
+    "warm_s": 2.87,
+    "repeat_identical": false,
+    "gpu_memory_mib": 703
+   },
+   "candidate": {
+    "terrain_id": 5,
+    "samples": 100000000,
+    "cold_s": 0.084,
+    "warm_s": 0.086,
+    "repeat_identical": false,
+    "gpu_memory_mib": 867
+   }
+  }
+ ]
+}

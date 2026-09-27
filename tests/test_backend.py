@@ -58,8 +58,17 @@ def test_solver_check_tables_have_consistent_columns() -> None:
         3, "hilltop", (0.1,) * len(checks.FLOOR_SAMPLES), d, d, d, d, d, (0.6, 0.5), 1, 0
     )
     tilts = [checks.TiltRow(t, -t, -90.0, 1.0) for t in checks.TILTS_DEG]
-    report = checks.solver_check_markdown(
-        tilts, checks.SurfaceCheck(d, d, d), [floor], specular_settings(10**7, 1), 10**8, "header"
+    from sionna_twin_ops.reports import render
+
+    report = render(
+        checks.solver_check_data(
+            tilts,
+            checks.SurfaceCheck(d, d, d),
+            [floor],
+            specular_settings(10**7, 1),
+            10**8,
+            {"commit": "abc"},
+        )
     )
     for block in report.split("\n\n"):
         rows = [line for line in block.splitlines() if line.startswith("|")]

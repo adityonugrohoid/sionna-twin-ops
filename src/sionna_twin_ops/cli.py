@@ -6,9 +6,10 @@ import platform
 import sys
 from importlib.metadata import version
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sionna_twin_ops.backend import DEFAULT_VARIANT
+from sionna_twin_ops.reports import write_report
 
 if TYPE_CHECKING:
     from sionna_twin_ops.site import ClassCheck
@@ -33,8 +34,8 @@ def environment_report() -> dict[str, object]:
     }
 
 
-def site_check_markdown(checks: list["ClassCheck"], ids: range, spacing_m: float) -> str:
-    """Render the site check as a markdown table.
+def site_check_data(checks: list["ClassCheck"], ids: range, spacing_m: float) -> dict[str, Any]:
+    """The site check's report data.
 
     Args:
         checks: Output of `site_check`.
@@ -42,32 +43,23 @@ def site_check_markdown(checks: list["ClassCheck"], ids: range, spacing_m: float
         spacing_m: Grid spacing used.
 
     Returns:
-        Markdown text.
+        JSON-safe data for `reports.site_check_markdown`.
     """
-    import numpy as np
-
-    lines = [
-        "# Site placement check (spec S2)",
-        "",
-        f"Synthetic terrain ids {ids.start} to {ids.stop - 1}, {spacing_m:.0f} m grid, each id "
-        "placed with its own class. Percentile: midrank percentile of the site height among "
-        "the vertices of its 5.12 km map. Written by `twin site-check`.",
-        "",
-        "| class | ids | placed | skipped | p10 | median | p90 | skipped ids |",
-        "|---|---|---|---|---|---|---|---|",
-    ]
-    for c in checks:
-        if c.percentiles:
-            p10, p50, p90 = np.percentile(c.percentiles, [10, 50, 90])
-            stats = f"{p10:.1f} | {p50:.1f} | {p90:.1f}"
-        else:
-            stats = "- | - | -"
-        skipped = ", ".join(str(i) for i in c.skipped) or "none"
-        lines.append(
-            f"| {c.site_class} | {len(c.ids)} | {len(c.percentiles)} | {len(c.skipped)} "
-            f"| {stats} | {skipped} |"
-        )
-    return "\n".join(lines) + "\n"
+    return {
+        "kind": "site_check",
+        "first_id": ids.start,
+        "last_id": ids.stop - 1,
+        "spacing_m": spacing_m,
+        "classes": [
+            {
+                "site_class": c.site_class,
+                "ids": len(c.ids),
+                "percentiles": list(c.percentiles),
+                "skipped": list(c.skipped),
+            }
+            for c in checks
+        ],
+    }
 
 
 def solver_check(variant: str, seed: int, out_dir: Path) -> None:
@@ -91,22 +83,13 @@ def solver_check(variant: str, seed: int, out_dir: Path) -> None:
     tilt_rows = checks.tilt_check(settings, lobe_samples)
     surface = checks.surface_check(settings, tilt_deg=6.0)
     floor_rows = checks.sampling_floor(seed)
-    header = "\n".join(
-        [
-            "Synthetic terrain and a flat test tile, not a real place. Propagation: Sionna RT; "
-            "pattern: 3GPP TR 38.901. Line of sight and specular reflection only. Written by "
-            "`twin solver-check`.",
-            "",
-            "| provenance | |",
-            "|---|---|",
-            *(f"| {key} | {value} |" for key, value in provenance().items()),
-        ]
-    )
-    report = checks.solver_check_markdown(
-        tilt_rows, surface, floor_rows, settings, lobe_samples, header
+    report = write_report(
+        out_dir / "solver_check.md",
+        checks.solver_check_data(
+            tilt_rows, surface, floor_rows, settings, lobe_samples, provenance()
+        ),
     )
     (out_dir / "figures").mkdir(parents=True, exist_ok=True)
-    (out_dir / "solver_check.md").write_text(report, newline="\n")
     tilt_check_figure(
         [r.tilt_deg for r in tilt_rows],
         [r.lobe_elevation_deg for r in tilt_rows],
@@ -151,9 +134,16 @@ def evaluate_command(args: argparse.Namespace) -> None:
         args.cpu_further_maps,
     )
     median, p95 = evaluate.backend_agreement(args.backend_report)
-    report = evaluate.report_markdown(tallies, facts, uncertainty, timing)
+    data = evaluate.evaluation_data(tallies, facts, uncertainty, timing)
+    if args.first_run_commit is not None:
+        from sionna_twin_ops.provenance import commit
+
+        data["rescored_note"] = (
+            f"Re-scored at {commit()[:7]} to add machine-readable output; all non-timing "
+            f"numbers identical to the first run at {args.first_run_commit}."
+        )
+    report = write_report(args.out_dir / f"evaluation_{args.split}.md", data)
     (args.out_dir / "figures").mkdir(parents=True, exist_ok=True)
-    (args.out_dir / f"evaluation_{args.split}.md").write_text(report, newline="\n")
     caption = (
         f"Synthetic terrain, {args.split} split; propagation: "
         f"{'; '.join(facts['ray tracing'])} (llvm-equivalent: median {median:.3f} and p95 "
@@ -276,7 +266,7 @@ def search_report_command(args: argparse.Namespace) -> None:
         for device in ("cpu", "cuda")
     }
     classes = {t: site["site_class"] for t, site in trace_meta["sites"].items()}
-    report = search.report_markdown(
+    data = search.report_data(
         args.split,
         scores,
         plan,
@@ -302,7 +292,7 @@ def search_report_command(args: argparse.Namespace) -> None:
         "Dashed: 1 point."
     )
     (args.out_dir / "figures").mkdir(parents=True, exist_ok=True)
-    (args.out_dir / f"search_{args.split}.md").write_text(report, newline="\n")
+    report = write_report(args.out_dir / f"search_{args.split}.md", data)
     search.search_figure(scores, caption, args.out_dir / "figures" / f"search_{args.split}.jpg")
     sys.stdout.write(report)
 
@@ -432,6 +422,11 @@ def main(argv: list[str] | None = None) -> int:
         "--cpu-further-maps", type=int, required=True, help="further maps timed per terrain"
     )
     eval_cmd.add_argument(
+        "--first-run-commit",
+        help="re-scoring only: the commit of the first run, whose non-timing numbers this "
+        "run was checked against (adds a line saying so)",
+    )
+    eval_cmd.add_argument(
         "--out-dir", type=Path, required=True, help="writes evaluation_<split>.md and figures/"
     )
     rt_time = commands.add_parser(
@@ -521,9 +516,9 @@ def main(argv: list[str] | None = None) -> int:
         from sionna_twin_ops.site import site_check
 
         ids = range(args.count)
-        report = site_check_markdown(site_check(ids, args.spacing), ids, args.spacing)
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(report, newline="\n")
+        report = write_report(
+            args.out, site_check_data(site_check(ids, args.spacing), ids, args.spacing)
+        )
         sys.stdout.write(report)
         return 0
     if args.command == "solver-check":
@@ -538,11 +533,9 @@ def main(argv: list[str] | None = None) -> int:
         floor_maps([int(float(n)) for n in args.samples.split(",")], args.seed, args.out)
         return 0
     if args.command == "backend-check":
-        from sionna_twin_ops.crosscheck import compare_markdown
+        from sionna_twin_ops.crosscheck import compare_data
 
-        report = compare_markdown(args.reference, args.candidate)
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(report, newline="\n")
+        report = write_report(args.out, compare_data(args.reference, args.candidate))
         sys.stdout.write(report)
         return 0
     if args.command == "dataset-sweep":
@@ -557,11 +550,9 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write(f"traced {traced} maps into {args.out}\n")
         return 0
     if args.command == "dataset-summary":
-        from sionna_twin_ops.dataset import summary_markdown
+        from sionna_twin_ops.dataset import summary_data
 
-        report = summary_markdown(args.dataset, args.selection)
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(report, newline="\n")
+        report = write_report(args.out, summary_data(args.dataset, args.selection))
         sys.stdout.write(report)
         return 0
     if args.command == "train":
@@ -578,33 +569,29 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     if args.command == "training-summary":
-        from sionna_twin_ops.train import training_summary_markdown
+        from sionna_twin_ops.train import training_summary_data
 
-        report = training_summary_markdown(args.runs, args.context_runs)
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(report, newline="\n")
+        report = write_report(args.out, training_summary_data(args.runs, args.context_runs))
         sys.stdout.write(report)
         return 0
     if args.command == "symmetry-check":
         from sionna_twin_ops.backend import select_variant
 
         select_variant(args.variant)
-        from sionna_twin_ops.crosscheck import symmetry_check_markdown
+        from sionna_twin_ops.crosscheck import symmetry_check_data
 
-        report = symmetry_check_markdown(args.terrain_id, args.azimuth, args.tilt)
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(report, newline="\n")
+        report = write_report(
+            args.out, symmetry_check_data(args.terrain_id, args.azimuth, args.tilt)
+        )
         sys.stdout.write(report)
         return 0
     if args.command == "fold-check":
         from sionna_twin_ops.backend import select_variant
 
         select_variant(args.variant)
-        from sionna_twin_ops.crosscheck import fold_check_markdown
+        from sionna_twin_ops.crosscheck import fold_check_data
 
-        report = fold_check_markdown(args.azimuth, args.tilt)
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(report, newline="\n")
+        report = write_report(args.out, fold_check_data(args.azimuth, args.tilt))
         sys.stdout.write(report)
         return 0
     if args.command == "raytrace-timing":

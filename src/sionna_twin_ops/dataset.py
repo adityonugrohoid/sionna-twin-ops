@@ -289,7 +289,7 @@ def sweep(
     return traced
 
 
-def summary_markdown(dataset: Path, version: str) -> str:
+def summary_data(dataset: Path, version: str) -> dict[str, Any]:
     """The committed record of a dataset (spec D4): counts, skips, time, no-hit shares.
 
     Args:
@@ -297,7 +297,7 @@ def summary_markdown(dataset: Path, version: str) -> str:
         version: Dataset version whose selection the manifest should match.
 
     Returns:
-        Markdown text.
+        JSON-safe data for `reports.dataset_summary_markdown`.
 
     Raises:
         ValueError: If the manifest mixes settings or holds maps outside the selection.
@@ -316,92 +316,60 @@ def summary_markdown(dataset: Path, version: str) -> str:
     settings = {json.dumps(line["settings"], sort_keys=True) for line in lines_}
     if len(settings) > 1:
         raise ValueError("manifest mixes solver settings")
-    missing = len(expected) - len(present)
 
     cells = 128 * 128
     splits = [s for s, _ in SPLIT_PER_CLASS]
-    out = [
-        f"# Dataset summary ({version})",
-        "",
-        "Synthetic terrain, not a real place. Propagation: Sionna RT, line of sight and "
-        "specular reflection only (no diffraction, no diffuse scattering); pattern: 3GPP TR "
-        "38.901. One sector per map, no vegetation or buildings, flat Earth. Written by "
-        "`twin dataset-summary`; the maps themselves are not in git.",
-        "",
-        f"Maps in the manifest: {len(present)} of {len(expected)} expected"
-        + ("." if missing == 0 else f"; {missing} not yet traced."),
-        "",
-        "## Terrains and maps per split and site class",
-        "",
-        "| split | " + " | ".join(SITE_CLASSES) + " | terrains | grid maps | off-grid maps |",
-        "|---|" + "---|" * (len(SITE_CLASSES) + 3),
-    ]
+    rows = []
     for split in splits:
         members = [e for e in selection.terrains if e.split == split]
-        per_class = [sum(e.site.site_class == c for e in members) for c in SITE_CLASSES]
         maps = [line for line in present.values() if line["split"] == split]
-        grid = sum(m["kind"] == "grid" for m in maps)
-        off_grid = sum(m["kind"] == "off-grid" for m in maps)
-        counts = " | ".join(str(n) for n in per_class)
-        out.append(f"| {split} | {counts} | {len(members)} | {grid} | {off_grid} |")
-    ids_by_split = {
-        split: ", ".join(str(e.terrain_id) for e in selection.terrains if e.split == split)
-        for split in splits
-    }
-    out += [
-        "",
-        "Terrain ids by split: " + "; ".join(f"{s} {ids}" for s, ids in ids_by_split.items()) + ".",
-        "",
-        "## Skipped terrain ids",
-        "",
-        "Ids with no site candidate for their class (spec S2); the walk moved on to the next "
-        f"id of that class. Highest id walked: {max(e.terrain_id for e in selection.terrains)}.",
-        "",
-        "| site class | skipped | ids |",
-        "|---|---|---|",
-    ]
-    for site_class in SITE_CLASSES:
-        ids = [i for i, c in selection.skipped if c == site_class]
-        out.append(f"| {site_class} | {len(ids)} | {', '.join(str(i) for i in ids) or 'none'} |")
-    out += [
-        "",
-        "## No-hit share per site class",
-        "",
-        "Share of map cells no ray reached (the 'no signal' class of spec E3), over all maps "
-        "of the class.",
-        "",
-        "| site class | maps | mean | min | max |",
-        "|---|---|---|---|---|",
-    ]
+        rows.append(
+            {
+                "split": split,
+                "per_class": [sum(e.site.site_class == c for e in members) for c in SITE_CLASSES],
+                "terrains": len(members),
+                "grid_maps": sum(m["kind"] == "grid" for m in maps),
+                "off_grid_maps": sum(m["kind"] == "off-grid" for m in maps),
+                "ids": [e.terrain_id for e in selection.terrains if e.split == split],
+            }
+        )
+    no_hit = {}
     for site_class in SITE_CLASSES:
         shares = [
             line["cells_no_hit"] / cells
             for line in present.values()
             if line["site"]["site_class"] == site_class
         ]
-        if shares:
-            out.append(
-                f"| {site_class} | {len(shares)} | {np.mean(shares) * 100:.1f}% | "
-                f"{min(shares) * 100:.1f}% | {max(shares) * 100:.1f}% |"
-            )
-        else:
-            out.append(f"| {site_class} | 0 | - | - | - |")
+        no_hit[site_class] = (
+            {
+                "maps": len(shares),
+                "mean": float(np.mean(shares)),
+                "min": min(shares),
+                "max": max(shares),
+            }
+            if shares
+            else {"maps": 0}
+        )
     wall = [line["wall_s"] for line in present.values()]
-    out += [
-        "",
-        "## Time and settings",
-        "",
-        f"Solver wall time over all maps: {sum(wall) / 3600:.2f} h ({sum(wall):.0f} s; "
-        f"median {np.median(wall) if wall else 0:.2f} s per map). Scene building and file "
-        "writing are not included.",
-        "",
-        "| setting | value |",
-        "|---|---|",
-    ]
-    if lines_:
-        out += [f"| {k} | {v} |" for k, v in lines_[0]["settings"].items()]
-        out += ["", "| provenance | values seen |", "|---|---|"]
-        for key in lines_[0]["provenance"]:
-            seen = sorted({str(line["provenance"][key]) for line in lines_})
-            out.append(f"| {key} | {'; '.join(seen)} |")
-    return "\n".join(out) + "\n"
+    return {
+        "kind": "dataset_summary",
+        "version": version,
+        "maps_present": len(present),
+        "maps_expected": len(expected),
+        "site_classes": list(SITE_CLASSES),
+        "splits": rows,
+        "highest_id": max(e.terrain_id for e in selection.terrains),
+        "skipped": {c: [i for i, k in selection.skipped if k == c] for c in SITE_CLASSES},
+        "no_hit": no_hit,
+        "wall_s_total": sum(wall),
+        "wall_s_median": float(np.median(wall)) if wall else 0,
+        "settings": lines_[0]["settings"] if lines_ else None,
+        "provenance_seen": (
+            {
+                key: sorted({str(line["provenance"][key]) for line in lines_})
+                for key in lines_[0]["provenance"]
+            }
+            if lines_
+            else None
+        ),
+    }
