@@ -147,8 +147,8 @@ def evaluate_command(args: argparse.Namespace) -> None:
     (args.out_dir / "figures").mkdir(parents=True, exist_ok=True)
     (args.out_dir / f"evaluation_{args.split}.md").write_text(report, newline="\n")
     caption = (
-        f"Synthetic terrain, {args.split} split; propagation: Sionna RT "
-        f"{version('sionna-rt')}, {'; '.join(facts['ray tracing'])}; pattern: 3GPP TR 38.901. "
+        f"Synthetic terrain, {args.split} split; propagation: "
+        f"{'; '.join(facts['ray tracing'])}; pattern: 3GPP TR 38.901. "
         f"Azimuth {evaluate.FIGURE_AZIMUTH_DEG:.0f} deg, tilt {evaluate.FIGURE_TILT_DEG:.0f} "
         f"deg; surrogate: {args.runs[0]}. Clear cells: no traced power (left, right) or no "
         f"predicted power (middle). Error clipped at +-{evaluate.ERROR_LIMIT_DB:.0f} dB."

@@ -389,7 +389,7 @@ def measure_timing(dataset: Path, split: str, run: Path, cpu_trace_maps: int) ->
 
 def _spread(values: list[float], digits: int) -> str:
     """Mean over seeds with the min-max range."""
-    return f"{np.mean(values):.{digits}f} ({min(values):.{digits}f}-{max(values):.{digits}f})"
+    return f"{np.mean(values):.{digits}f} ({min(values):.{digits}f} to {max(values):.{digits}f})"
 
 
 def report_markdown(
@@ -452,7 +452,7 @@ def report_markdown(
         f"Maps: {facts['maps']} ({facts['grid maps']} grid, {facts['off-grid maps']} off-grid) "
         f"on terrains {', '.join(str(t) for t in facts['terrains'])}. Surrogate: the "
         f"best-epoch checkpoints of {', '.join(facts['runs'])}; each surrogate figure is the "
-        "mean over the seeds with the min-max range.",
+        "mean over the seeds, with the lowest and highest seed in brackets.",
         "",
         "Errors are predicted minus traced path gain in dB, over cells where the ray tracer "
         "has power. Strata: LOS direct-dominated and LOS reflection-dominated (traced gain "
