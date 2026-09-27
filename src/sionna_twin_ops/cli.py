@@ -178,12 +178,35 @@ def main(argv: list[str] | None = None) -> int:
     train_cmd.add_argument("--epochs", type=int, required=True, help="training epochs")
     train_cmd.add_argument("--width", type=int, required=True, help="U-Net first-level width")
     train_cmd.add_argument(
+        "--augmentation",
+        choices=("none", "symmetry"),
+        required=True,
+        help="symmetry: the 8 exact map symmetries, training split only",
+    )
+    train_cmd.add_argument(
         "--device", choices=("cuda", "cpu"), required=True, help="explicit device, no fallback"
     )
     train_cmd.add_argument("--out", type=Path, required=True, help="run directory")
     runs_cmd = commands.add_parser("training-summary", help="summarise training runs")
     runs_cmd.add_argument("--runs", type=Path, nargs="+", required=True, help="run directories")
+    runs_cmd.add_argument(
+        "--context-runs",
+        type=Path,
+        nargs="*",
+        required=True,
+        help="earlier run directories to quote as context (may be empty)",
+    )
     runs_cmd.add_argument("--out", type=Path, required=True, help="markdown file to write")
+    sym = commands.add_parser(
+        "symmetry-check", help="trace a map and its 8 symmetric variants and compare them"
+    )
+    sym.add_argument(
+        "--variant", default=DEFAULT_VARIANT, help=f"Mitsuba variant (default {DEFAULT_VARIANT})"
+    )
+    sym.add_argument("--terrain-id", type=int, required=True, help="terrain id")
+    sym.add_argument("--azimuth", type=float, required=True, help="boresight azimuth in deg")
+    sym.add_argument("--tilt", type=float, required=True, help="electrical tilt in deg")
+    sym.add_argument("--out", type=Path, required=True, help="markdown file to write")
     args = parser.parse_args(argv)
 
     if args.command == "env":
@@ -252,12 +275,31 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "train":
         from sionna_twin_ops.train import train
 
-        train(args.dataset, args.seed, args.epochs, args.width, args.device, args.out)
+        train(
+            args.dataset,
+            args.seed,
+            args.epochs,
+            args.width,
+            args.augmentation,
+            args.device,
+            args.out,
+        )
         return 0
     if args.command == "training-summary":
         from sionna_twin_ops.train import training_summary_markdown
 
-        report = training_summary_markdown(args.runs)
+        report = training_summary_markdown(args.runs, args.context_runs)
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(report, newline="\n")
+        sys.stdout.write(report)
+        return 0
+    if args.command == "symmetry-check":
+        from sionna_twin_ops.backend import select_variant
+
+        select_variant(args.variant)
+        from sionna_twin_ops.crosscheck import symmetry_check_markdown
+
+        report = symmetry_check_markdown(args.terrain_id, args.azimuth, args.tilt)
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(report, newline="\n")
         sys.stdout.write(report)

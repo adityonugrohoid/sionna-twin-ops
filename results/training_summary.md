@@ -11,6 +11,7 @@ Synthetic terrain. The surrogate is a U-Net predicting the ray-traced path gain 
 | learning_rate | 0.001 |
 | weight_decay | 0.0001 |
 | power_loss_weight | 1.0 |
+| augmentation | symmetry |
 | schedule | cosine over all steps |
 | optimizer | AdamW |
 | cudnn_deterministic | True |
@@ -19,7 +20,7 @@ Synthetic terrain. The surrogate is a U-Net predicting the ray-traced path gain 
 
 | provenance | values seen |
 |---|---|
-| commit | 5b18180b76b7fd38694878d4048a270a24ace666 |
+| commit | cc4199d2bfd652b6261b1b15d7fb93ccf7da24f7 |
 | platform | Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39 |
 | python | 3.13.12 |
 | torch | 2.14.0+cu130 |
@@ -30,12 +31,22 @@ Synthetic terrain. The surrogate is a U-Net predicting the ray-traced path gain 
 
 L1 is the mean absolute error in dB over validation cells where the ray tracer has power; power accuracy is the share of all validation cells whose power logit has the right sign.
 
-| seed | best epoch | L1 (dB) | BCE | power accuracy | total loss | seconds |
-|---|---|---|---|---|---|---|
-| 0 | 7 | 1.958 | 0.0640 | 97.44% | 0.2598 | 396 |
-| 1 | 5 | 1.936 | 0.0666 | 97.41% | 0.2602 | 408 |
-| 2 | 7 | 1.935 | 0.0649 | 97.46% | 0.2584 | 408 |
+| seed | best epoch | L1 (dB) | NLOS L1 (dB) | BCE | power accuracy | total loss | L1 at last epoch (dB) | seconds |
+|---|---|---|---|---|---|---|---|---|
+| 0 | 16 | 1.796 | 4.270 | 0.0572 | 97.68% | 0.2368 | 2.502 (epoch 50) | 441 |
+| 1 | 14 | 1.841 | 4.378 | 0.0590 | 97.62% | 0.2431 | 2.457 (epoch 50) | 449 |
+| 2 | 14 | 1.824 | 4.398 | 0.0588 | 97.67% | 0.2412 | 2.350 (epoch 50) | 451 |
 
-Across seeds: L1 1.943 (min 1.935, max 1.958) dB; power accuracy 0.974 (min 0.974, max 0.975); BCE 0.065 (min 0.064, max 0.067).
+Across seeds: L1 1.820 (min 1.796, max 1.841) dB; power accuracy 0.977 (min 0.976, max 0.977); BCE 0.058 (min 0.057, max 0.059).
 
-All 3 seeds peak at epochs 5-7 and overfit after: for seed 0, validation L1 goes from 1.958 dB at epoch 7 to 2.541 dB at epoch 50, while the training loss falls from 0.238 to 0.039. The saved weights are those of the best epoch.
+All 3 seeds peak at epochs 14-16 and overfit after: for seed 0, validation L1 goes from 1.796 dB at epoch 16 to 2.502 dB at epoch 50, while the training loss falls from 0.214 to 0.102. The saved weights are those of the best epoch.
+
+## Context: earlier runs, quoted
+
+Quoted from the run records of commit 5b18180 (augmentation none), not retrained or recomputed here.
+
+| seed | best epoch | L1 (dB) | power accuracy | L1 at last epoch (dB) |
+|---|---|---|---|---|
+| 0 | 7 | 1.958 | 97.44% | 2.541 (epoch 50) |
+| 1 | 5 | 1.936 | 97.41% | 2.476 (epoch 50) |
+| 2 | 7 | 1.935 | 97.46% | 2.414 (epoch 50) |

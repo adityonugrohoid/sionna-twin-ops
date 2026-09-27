@@ -18,11 +18,14 @@ import numpy as np
 import torch
 from torch import Tensor, nn
 
+from sionna_twin_ops.augment import SIN_CHANNEL, VARIANTS
 from sionna_twin_ops.dataset import read_manifest
 from sionna_twin_ops.features import map_inputs, targets, terrain_features
 from sionna_twin_ops.model import RESIDUAL_SCALE_DB, UNet, parameter_count
 from sionna_twin_ops.site import Site
+from sionna_twin_ops.terrain import GRID_SPACING_M, generate_terrain
 
+LOS_CHANNEL = 5  # features.py
 POWER_LOSS_WEIGHT = 1.0  # ASSUMPTION: total = L1(dB) / RESIDUAL_SCALE_DB + weight * BCE
 BATCH_SIZE = 16
 LEARNING_RATE = 1e-3
@@ -70,7 +73,8 @@ def load_split(dataset: Path, split: str) -> SplitData:
     for line in lines:
         terrain_id = line["terrain_id"]
         if terrain_id not in cache:
-            cache[terrain_id] = terrain_features(terrain_id, Site(**line["site"]))
+            terrain = generate_terrain(terrain_id, GRID_SPACING_M)
+            cache[terrain_id] = terrain_features(terrain, Site(**line["site"]))
         x, b0 = map_inputs(cache[terrain_id], line["azimuth_deg"], line["tilt_deg"])
         residual, power = targets(np.load(dataset / "maps" / line["file"]), b0)
         inputs.append(x)
@@ -110,18 +114,24 @@ def evaluate(model: nn.Module, data: SplitData, device: torch.device) -> dict[st
         device: Where to run.
 
     Returns:
-        L1 in dB on cells with power, BCE, total loss and power-mask accuracy.
+        L1 in dB on cells with power (all, and NLOS only), BCE, total loss and
+        power-mask accuracy.
     """
     model.eval()
     l1_sum = bce_sum = correct = cells = power_cells = 0.0
+    nlos_sum = nlos_cells = 0.0
     with torch.no_grad():
         for start in range(0, len(data.files), BATCH_SIZE):
             x = data.inputs[start : start + BATCH_SIZE].to(device)
             r = data.residual[start : start + BATCH_SIZE].to(device)
             p = data.power[start : start + BATCH_SIZE].to(device)
             out = model(x)
-            l1_sum += float((torch.abs(out[:, 0] * RESIDUAL_SCALE_DB - r) * p).sum())
+            error = torch.abs(out[:, 0] * RESIDUAL_SCALE_DB - r) * p
+            l1_sum += float(error.sum())
             power_cells += float(p.sum())
+            nlos = 1.0 - x[:, LOS_CHANNEL]
+            nlos_sum += float((error * nlos).sum())
+            nlos_cells += float((p * nlos).sum())
             bce_sum += float(
                 nn.functional.binary_cross_entropy_with_logits(out[:, 1], p, reduction="sum")
             )
@@ -131,14 +141,73 @@ def evaluate(model: nn.Module, data: SplitData, device: torch.device) -> dict[st
     bce = bce_sum / cells
     return {
         "l1_db": l1,
+        "l1_nlos_db": nlos_sum / nlos_cells,
         "bce": bce,
         "total": l1 / RESIDUAL_SCALE_DB + POWER_LOSS_WEIGHT * bce,
         "power_accuracy": correct / cells,
     }
 
 
+def transform_batch(
+    inputs: Tensor, rasters: list[Tensor], k: int, mirror: bool
+) -> tuple[Tensor, list[Tensor]]:
+    """The same variant on a training batch on any device.
+
+    Args:
+        inputs: (batch, channels, rows, columns).
+        rasters: Other (batch, rows, columns) tensors, such as the targets.
+        k: Clockwise quarter turns.
+        mirror: Mirror east-west first.
+
+    Returns:
+        (transformed inputs, transformed rasters).
+    """
+
+    def apply(t: Tensor) -> Tensor:
+        if mirror:
+            t = torch.flip(t, dims=(-1,))
+        return torch.rot90(t, k=k, dims=(-2, -1))
+
+    x = apply(inputs)
+    if mirror:
+        x = x.clone()
+        x[:, SIN_CHANNEL] = -x[:, SIN_CHANNEL]
+    return x, [apply(r) for r in rasters]
+
+
+def augment_batch(
+    x: Tensor, r: Tensor, p: Tensor, generator: torch.Generator
+) -> tuple[Tensor, Tensor, Tensor]:
+    """Give every sample of a training batch its own random exact symmetry.
+
+    Args:
+        x: Inputs (batch, channels, rows, columns).
+        r: Residual targets (batch, rows, columns).
+        p: Power masks (batch, rows, columns).
+        generator: Seeded source of the variant choices.
+
+    Returns:
+        The transformed (x, r, p).
+    """
+    picks = torch.randint(len(VARIANTS), (x.shape[0],), generator=generator).tolist()
+    xs, rs, ps = [], [], []
+    for i, pick in enumerate(picks):
+        k, mirror = VARIANTS[pick]
+        xi, (ri, pi) = transform_batch(x[i : i + 1], [r[i : i + 1], p[i : i + 1]], k, mirror)
+        xs.append(xi)
+        rs.append(ri)
+        ps.append(pi)
+    return torch.cat(xs), torch.cat(rs), torch.cat(ps)
+
+
 def train(
-    dataset: Path, seed: int, epochs: int, width: int, device_name: str, out: Path
+    dataset: Path,
+    seed: int,
+    epochs: int,
+    width: int,
+    augmentation: str,
+    device_name: str,
+    out: Path,
 ) -> dict[str, Any]:
     """Train one seed and save the best-on-validation weights and the run record.
 
@@ -147,6 +216,7 @@ def train(
         seed: Training seed (initialisation and batch order).
         epochs: Training epochs.
         width: U-Net width at the first level.
+        augmentation: "none", or "symmetry" for the 8 exact map symmetries (train only).
         device_name: "cuda" or "cpu"; chosen explicitly, never by fallback.
         out: Run directory for model.pt and meta.json.
 
@@ -155,7 +225,10 @@ def train(
 
     Raises:
         RuntimeError: If "cuda" is asked for and PyTorch sees no CUDA device.
+        ValueError: If the augmentation is not "none" or "symmetry".
     """
+    if augmentation not in ("none", "symmetry"):
+        raise ValueError(f"unknown augmentation {augmentation!r}")
     from sionna_twin_ops.provenance import commit, gpu
 
     if device_name == "cuda" and not torch.cuda.is_available():
@@ -176,6 +249,7 @@ def train(
     steps = epochs * -(-len(train_data.files) // BATCH_SIZE)
     schedule = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=steps)
     order = torch.Generator().manual_seed(seed)
+    variants = torch.Generator().manual_seed(seed + 10_000)
     out.mkdir(parents=True, exist_ok=True)
     history = []
     best = None
@@ -188,6 +262,8 @@ def train(
             x = train_data.inputs[idx].to(device)
             r = train_data.residual[idx].to(device)
             p = train_data.power[idx].to(device)
+            if augmentation == "symmetry":
+                x, r, p = augment_batch(x, r, p, variants)
             _, _, total = losses(model(x), r, p)
             optimizer.zero_grad()
             # Tensor.backward carries no type annotations in torch.
@@ -222,6 +298,7 @@ def train(
             "learning_rate": LEARNING_RATE,
             "weight_decay": WEIGHT_DECAY,
             "power_loss_weight": POWER_LOSS_WEIGHT,
+            "augmentation": augmentation,
             "schedule": "cosine over all steps",
             "optimizer": "AdamW",
             "cudnn_deterministic": True,
@@ -235,10 +312,12 @@ def train(
     return record
 
 
-def training_summary_markdown(runs: list[Path]) -> str:
+def training_summary_markdown(runs: list[Path], context_runs: list[Path]) -> str:
     """The committed record of the training runs: settings, best epochs, spread across seeds.
 
     Args:
+        context_runs: Earlier run directories quoted as context from their own records
+            (not retrained, not recomputed); empty for none.
         runs: Run directories, one per seed.
 
     Returns:
@@ -288,15 +367,18 @@ def training_summary_markdown(runs: list[Path]) -> str:
         "power; power accuracy is the share of all validation cells whose power logit has "
         "the right sign.",
         "",
-        "| seed | best epoch | L1 (dB) | BCE | power accuracy | total loss | seconds |",
-        "|---|---|---|---|---|---|---|",
+        "| seed | best epoch | L1 (dB) | NLOS L1 (dB) | BCE | power accuracy | total loss | "
+        "L1 at last epoch (dB) | seconds |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for meta in metas:
         b = meta["best"]
+        nlos = f"{b['l1_nlos_db']:.3f}" if "l1_nlos_db" in b else "not recorded"
+        last = meta["history"][-1]
         lines.append(
-            f"| {meta['hyperparameters']['seed']} | {b['epoch']} | {b['l1_db']:.3f} | "
+            f"| {meta['hyperparameters']['seed']} | {b['epoch']} | {b['l1_db']:.3f} | {nlos} | "
             f"{b['bce']:.4f} | {b['power_accuracy'] * 100:.2f}% | {b['total']:.4f} | "
-            f"{meta['seconds']['total']:.0f} |"
+            f"{last['l1_db']:.3f} (epoch {last['epoch']}) | {meta['seconds']['total']:.0f} |"
         )
     lines += [
         "",
@@ -305,6 +387,26 @@ def training_summary_markdown(runs: list[Path]) -> str:
         "",
         overfitting_note(metas),
     ]
+    if context_runs:
+        context = [json.loads((run / "meta.json").read_text()) for run in context_runs]
+        commits = sorted({m["provenance"]["commit"][:7] for m in context})
+        augmentations = sorted({m["hyperparameters"].get("augmentation", "none") for m in context})
+        lines += [
+            "",
+            "## Context: earlier runs, quoted",
+            "",
+            f"Quoted from the run records of commit {', '.join(commits)} (augmentation "
+            f"{', '.join(augmentations)}), not retrained or recomputed here.",
+            "",
+            "| seed | best epoch | L1 (dB) | power accuracy | L1 at last epoch (dB) |",
+            "|---|---|---|---|---|",
+        ]
+        for meta in context:
+            b, last = meta["best"], meta["history"][-1]
+            lines.append(
+                f"| {meta['hyperparameters']['seed']} | {b['epoch']} | {b['l1_db']:.3f} | "
+                f"{b['power_accuracy'] * 100:.2f}% | {last['l1_db']:.3f} (epoch {last['epoch']}) |"
+            )
     return "\n".join(lines) + "\n"
 
 

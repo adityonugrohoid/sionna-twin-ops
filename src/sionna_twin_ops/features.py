@@ -21,7 +21,7 @@ from numpy.typing import NDArray
 
 from sionna_twin_ops.baselines import MapGeometry, b0_gain_db, los_mask, map_geometry
 from sionna_twin_ops.site import Site
-from sionna_twin_ops.terrain import GRID_SPACING_M, generate_terrain
+from sionna_twin_ops.terrain import Terrain
 
 INPUT_CHANNELS = 7
 B0_OFFSET_DB = 100.0
@@ -47,17 +47,17 @@ class TerrainFeatures:
     los: NDArray[np.float32]
 
 
-def terrain_features(terrain_id: int, site: Site) -> TerrainFeatures:
+def terrain_features(terrain: Terrain, site: Site) -> TerrainFeatures:
     """Terrain-only channels of one terrain's map.
 
     Args:
-        terrain_id: Terrain id.
+        terrain: The terrain (a generated tile, or a site-centred crop of one).
         site: Its site.
 
     Returns:
         The channels.
     """
-    geometry = map_geometry(generate_terrain(terrain_id, GRID_SPACING_M), site)
+    geometry = map_geometry(terrain, site)
     dz = geometry.rx_m - site.antenna_m
     horizontal_m = geometry.distance_km * 1000.0
     return TerrainFeatures(
