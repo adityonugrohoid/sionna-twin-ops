@@ -425,7 +425,8 @@ def fold_check_markdown(azimuth_deg: float, tilt_deg: float) -> str:
         f"A cell with power in the SW-NE map is reflection-dominated when its traced gain "
         f"exceeds B0 (direct path and antenna pattern, no terrain) by {REFLECTION_EXCESS_DB:.0f} "
         "dB or more (ASSUMPTION), and direct-dominated otherwise. Median / p95 of the fold "
-        "term, and the cells compared.",
+        "term, and the cells compared. B0 has no terrain, so shadowed cells rarely exceed "
+        "it: the NLOS split says little, and nearly all NLOS cells fall under direct.",
         "",
         "| site class | LOS direct | LOS reflection | NLOS direct | NLOS reflection | "
         "LOS cells reflection-dominated |",
