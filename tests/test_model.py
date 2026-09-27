@@ -81,7 +81,8 @@ def test_training_writes_weights_and_a_record(tmp_path: Path) -> None:
     assert record["maps"] == {"train": 2, "validation": 2}
     assert record["best"]["epoch"] in (1, 2)
     assert len(record["history"]) == 2
-    report = training_summary_markdown([tmp_path / "run"])
+    report = training_summary_markdown([tmp_path / "run"], [tmp_path / "run"])
     assert "| 0 | " in report
+    assert "Context: earlier runs, quoted" in report
     assert record["hyperparameters"]["augmentation"] == "symmetry"
     assert "l1_nlos_db" in record["best"]

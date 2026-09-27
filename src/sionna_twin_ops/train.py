@@ -312,10 +312,12 @@ def train(
     return record
 
 
-def training_summary_markdown(runs: list[Path]) -> str:
+def training_summary_markdown(runs: list[Path], context_runs: list[Path]) -> str:
     """The committed record of the training runs: settings, best epochs, spread across seeds.
 
     Args:
+        context_runs: Earlier run directories quoted as context from their own records
+            (not retrained, not recomputed); empty for none.
         runs: Run directories, one per seed.
 
     Returns:
@@ -385,6 +387,26 @@ def training_summary_markdown(runs: list[Path]) -> str:
         "",
         overfitting_note(metas),
     ]
+    if context_runs:
+        context = [json.loads((run / "meta.json").read_text()) for run in context_runs]
+        commits = sorted({m["provenance"]["commit"][:7] for m in context})
+        augmentations = sorted({m["hyperparameters"].get("augmentation", "none") for m in context})
+        lines += [
+            "",
+            "## Context: earlier runs, quoted",
+            "",
+            f"Quoted from the run records of commit {', '.join(commits)} (augmentation "
+            f"{', '.join(augmentations)}), not retrained or recomputed here.",
+            "",
+            "| seed | best epoch | L1 (dB) | power accuracy | L1 at last epoch (dB) |",
+            "|---|---|---|---|---|",
+        ]
+        for meta in context:
+            b, last = meta["best"], meta["history"][-1]
+            lines.append(
+                f"| {meta['hyperparameters']['seed']} | {b['epoch']} | {b['l1_db']:.3f} | "
+                f"{b['power_accuracy'] * 100:.2f}% | {last['l1_db']:.3f} (epoch {last['epoch']}) |"
+            )
     return "\n".join(lines) + "\n"
 
 

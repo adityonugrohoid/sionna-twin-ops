@@ -40,3 +40,13 @@ L1 is the mean absolute error in dB over validation cells where the ray tracer h
 Across seeds: L1 1.820 (min 1.796, max 1.841) dB; power accuracy 0.977 (min 0.976, max 0.977); BCE 0.058 (min 0.057, max 0.059).
 
 All 3 seeds peak at epochs 14-16 and overfit after: for seed 0, validation L1 goes from 1.796 dB at epoch 16 to 2.502 dB at epoch 50, while the training loss falls from 0.214 to 0.102. The saved weights are those of the best epoch.
+
+## Context: earlier runs, quoted
+
+Quoted from the run records of commit 5b18180 (augmentation none), not retrained or recomputed here.
+
+| seed | best epoch | L1 (dB) | power accuracy | L1 at last epoch (dB) |
+|---|---|---|---|---|
+| 0 | 7 | 1.958 | 97.44% | 2.541 (epoch 50) |
+| 1 | 5 | 1.936 | 97.41% | 2.476 (epoch 50) |
+| 2 | 7 | 1.935 | 97.46% | 2.414 (epoch 50) |

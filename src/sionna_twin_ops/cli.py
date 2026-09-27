@@ -189,6 +189,13 @@ def main(argv: list[str] | None = None) -> int:
     train_cmd.add_argument("--out", type=Path, required=True, help="run directory")
     runs_cmd = commands.add_parser("training-summary", help="summarise training runs")
     runs_cmd.add_argument("--runs", type=Path, nargs="+", required=True, help="run directories")
+    runs_cmd.add_argument(
+        "--context-runs",
+        type=Path,
+        nargs="*",
+        required=True,
+        help="earlier run directories to quote as context (may be empty)",
+    )
     runs_cmd.add_argument("--out", type=Path, required=True, help="markdown file to write")
     sym = commands.add_parser(
         "symmetry-check", help="trace a map and its 8 symmetric variants and compare them"
@@ -281,7 +288,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "training-summary":
         from sionna_twin_ops.train import training_summary_markdown
 
-        report = training_summary_markdown(args.runs)
+        report = training_summary_markdown(args.runs, args.context_runs)
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(report, newline="\n")
         sys.stdout.write(report)
