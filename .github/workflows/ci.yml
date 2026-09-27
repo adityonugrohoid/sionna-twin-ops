@@ -29,7 +29,9 @@ jobs:
           # and saving it after every lock change costs another 48 s.
           enable-cache: false
       - run: uv sync --locked
-      - run: uv run ruff check src tests
-      - run: uv run ruff format --check src tests
+      - run: uv run ruff check src tests notebooks
+      - run: uv run ruff format --check src tests notebooks
       - run: uv run mypy
       - run: uv run pytest -q -rs
+      - run: uv run nbstripout --verify notebooks/report.ipynb
+      - run: uv run pytest -q --nbmake notebooks/report.ipynb

@@ -1,5 +1,6 @@
 """Evaluation arithmetic (spec rule E)."""
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -72,7 +73,8 @@ def test_uncertainty_is_quoted_from_the_committed_fold_check() -> None:
 
 def test_a_report_without_the_rows_is_refused(tmp_path: Path) -> None:
     report = tmp_path / "fold_check.md"
-    report.write_text("| commit | abcdef1234 |\n")
+    empty = {"kind": "fold_check", "provenance": {"commit": "abcdef1234"}, "truth": [], "paths": []}
+    report.with_suffix(".json").write_text(json.dumps(empty))
     with pytest.raises(ValueError, match="lacks the rows"):
         quoted_uncertainty(report)
 
@@ -85,7 +87,8 @@ def test_backend_agreement_is_read_from_the_committed_check() -> None:
 
 
 def test_reflection_note_follows_the_numbers() -> None:
-    from sionna_twin_ops.evaluate import Uncertainty, reflection_note
+    from sionna_twin_ops.evaluate import Uncertainty, reflection_values
+    from sionna_twin_ops.reports import reflection_note
 
     tally = Tally()
     tally.errors[("all", "LOS reflection")] = [np.array([-3.0, -2.0], dtype=np.float32)]
@@ -93,10 +96,14 @@ def test_reflection_note_follows_the_numbers() -> None:
     fold: dict[tuple[str, str], dict[str, tuple[float, ...]]] = {
         ("hilltop", "LOS reflection"): {"fold": (1.0, 3.0), "sampling": (0.0, 0.1)}
     }
-    note = reflection_note({"seed 0": tally}, ["seed 0"], Uncertainty("abc1234", fold))
+    note = reflection_note(
+        reflection_values({"seed 0": tally}, ["seed 0"], Uncertainty("abc1234", fold))
+    )
     assert "underpredicts (bias -2.5 dB)" in note
     assert "(3.00 dB) is above the fold term's median (1.00 dB)" in note
     tally.errors[("all", "LOS reflection")] = [np.array([3.0], dtype=np.float32)]
     fold[("hilltop", "LOS reflection")]["fold"] = (5.0, 9.0)
-    note = reflection_note({"seed 0": tally}, ["seed 0"], Uncertainty("abc1234", fold))
+    note = reflection_note(
+        reflection_values({"seed 0": tally}, ["seed 0"], Uncertainty("abc1234", fold))
+    )
     assert "overpredicts" in note and "is not above" in note

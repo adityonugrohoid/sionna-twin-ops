@@ -7,10 +7,9 @@ and per site class; off-grid tilts separately. Synthetic terrain.
 """
 
 import json
-import re
 import statistics
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +21,7 @@ from sionna_twin_ops.baselines import bullington_loss_db
 from sionna_twin_ops.dataset import read_manifest
 from sionna_twin_ops.features import map_inputs, targets, terrain_features
 from sionna_twin_ops.model import RESIDUAL_SCALE_DB, UNet
+from sionna_twin_ops.reports import read_report
 from sionna_twin_ops.site import SITE_CLASSES, Site
 from sionna_twin_ops.terrain import GRID_SPACING_M, generate_terrain
 from sionna_twin_ops.train import REFLECTION_EXCESS_DB
@@ -227,14 +227,6 @@ def error_stats(errors: list[NDArray[np.float32]]) -> tuple[float, float, float,
 
 
 GROUPS = ("all", *SITE_CLASSES)
-_TRUTH_ROW = re.compile(
-    r"^\| (all|hilltop|slope|valley) \| (fold|sampling) \| ([\d.]+) \| ([\d.]+) \| [\d.]+ \| "
-    r"\d+ \| ([\d.]+) \| ([\d.]+) \|"
-)
-_PATH_ROW = re.compile(
-    r"^\| (all|hilltop|slope|valley) \| ([\d.]+) / ([\d.]+) \(\d+\) \| ([\d.]+) / ([\d.]+) "
-    r"\(\d+\) \|"
-)
 
 
 @dataclass(frozen=True)
@@ -254,7 +246,7 @@ def quoted_uncertainty(fold_report: Path) -> Uncertainty:
     """The fold term and sampling floor per stratum, quoted from the committed fold check.
 
     Args:
-        fold_report: results/fold_check.md.
+        fold_report: results/fold_check.md (its data, results/fold_check.json, is read).
 
     Returns:
         The fold term and sampling floor per (group, stratum).
@@ -262,18 +254,27 @@ def quoted_uncertainty(fold_report: Path) -> Uncertainty:
     Raises:
         ValueError: If the report does not have the expected rows.
     """
-    text = fold_report.read_text().splitlines()
-    commits = [m.group(1) for line in text if (m := re.match(r"^\| commit \| (\w+) \|", line))]
-    commit = commits[0] if commits else None
-    if commit is None:
-        raise ValueError(f"no commit in {fold_report}")
-    truth: dict[tuple[str, str], tuple[float, ...]] = {}
-    paths: dict[str, tuple[float, ...]] = {}
-    for line in text:
-        if m := _TRUTH_ROW.match(line):
-            truth[(m.group(1), m.group(2))] = tuple(float(v) for v in m.groups()[2:])
-        elif m := _PATH_ROW.match(line):
-            paths[m.group(1)] = tuple(float(v) for v in m.groups()[1:])
+    data = read_report(fold_report)
+    if data["kind"] != "fold_check":
+        raise ValueError(f"{fold_report} is a {data['kind']} report, not a fold check")
+    truth = {
+        (row["group"], row["term"]): (
+            row["los"]["median"],
+            row["los"]["p95"],
+            row["nlos"]["median"],
+            row["nlos"]["p95"],
+        )
+        for row in data["truth"]
+    }
+    paths = {
+        row["group"]: (
+            row["los_direct"]["median"],
+            row["los_direct"]["p95"],
+            row["los_reflection"]["median"],
+            row["los_reflection"]["p95"],
+        )
+        for row in data["paths"]
+    }
     terms: dict[tuple[str, str], dict[str, tuple[float, ...]]] = {}
     for group in GROUPS:
         if (group, "fold") not in truth or (group, "sampling") not in truth or group not in paths:
@@ -282,7 +283,7 @@ def quoted_uncertainty(fold_report: Path) -> Uncertainty:
         terms[(group, "LOS direct")] = {"fold": path[0:2], "sampling": sampling[0:2]}
         terms[(group, "LOS reflection")] = {"fold": path[2:4], "sampling": sampling[0:2]}
         terms[(group, "NLOS")] = {"fold": fold[2:4], "sampling": sampling[2:4]}
-    return Uncertainty(commit=commit[:7], terms=terms)
+    return Uncertainty(commit=data["provenance"]["commit"][:7], terms=terms)
 
 
 @dataclass(frozen=True)
@@ -394,8 +395,10 @@ def measure_timing(
     )
 
 
-def reflection_note(tallies: dict[str, Tally], seeds: list[str], uncertainty: Uncertainty) -> str:
-    """One sentence on the LOS reflection-dominated stratum, written from the numbers.
+def reflection_values(
+    tallies: dict[str, Tally], seeds: list[str], uncertainty: Uncertainty
+) -> dict[str, float]:
+    """The numbers behind the sentence on the LOS reflection-dominated stratum.
 
     Args:
         tallies: Output of `evaluate_split`.
@@ -403,31 +406,26 @@ def reflection_note(tallies: dict[str, Tally], seeds: list[str], uncertainty: Un
         uncertainty: Output of `quoted_uncertainty`.
 
     Returns:
-        The sentence.
+        Mean bias over seeds (all cells), mean hilltop median error, and the hilltop fold
+        term's median, for `reports.reflection_note`.
     """
-    bias = np.mean([error_stats(tallies[s].errors[("all", "LOS reflection")])[3] for s in seeds])
-    median = np.mean(
-        [error_stats(tallies[s].errors[("hilltop", "LOS reflection")])[1] for s in seeds]
-    )
-    fold = uncertainty.terms[("hilltop", "LOS reflection")]["fold"][0]
-    direction = "underpredicts" if bias < 0 else "overpredicts"
-    relation = "above" if median > fold else "not above"
-    return (
-        f"In LOS reflection-dominated cells the surrogate {direction} (bias {bias:+.1f} dB), "
-        f"and on hilltops its median error there ({median:.2f} dB) is {relation} the fold "
-        f"term's median ({fold:.2f} dB)."
-    )
+    return {
+        "bias": float(
+            np.mean([error_stats(tallies[s].errors[("all", "LOS reflection")])[3] for s in seeds])
+        ),
+        "hilltop_median": float(
+            np.mean(
+                [error_stats(tallies[s].errors[("hilltop", "LOS reflection")])[1] for s in seeds]
+            )
+        ),
+        "hilltop_fold_median": float(uncertainty.terms[("hilltop", "LOS reflection")]["fold"][0]),
+    }
 
 
-def _spread(values: list[float], digits: int) -> str:
-    """Mean over seeds with the min-max range."""
-    return f"{np.mean(values):.{digits}f} ({min(values):.{digits}f} to {max(values):.{digits}f})"
-
-
-def report_markdown(
+def evaluation_data(
     tallies: dict[str, Tally], facts: dict[str, Any], uncertainty: Uncertainty, timing: Timing
-) -> str:
-    """The evaluation report (spec E1 to E6).
+) -> dict[str, Any]:
+    """The evaluation's report data (spec E1 to E6): every statistic the report prints.
 
     Args:
         tallies: Output of `evaluate_split`.
@@ -436,208 +434,77 @@ def report_markdown(
         timing: Output of `measure_timing`.
 
     Returns:
-        Markdown text.
+        JSON-safe data for `reports.evaluation_markdown`.
     """
     seeds = [name for name in tallies if name.startswith("seed")]
-    gpu_new = timing.terrain_features + timing.map_inputs + timing.surrogate_gpu
-    gpu_further = timing.map_inputs + timing.surrogate_gpu
-    cpu_new = timing.terrain_features + timing.map_inputs + timing.surrogate_cpu
-    cpu_further = timing.map_inputs + timing.surrogate_cpu
 
-    def e1_block(group: str) -> list[str]:
-        rows = [
-            "| stratum | method | mean abs | median abs | p95 abs | bias | cells |",
-            "|---|---|---|---|---|---|---|",
-        ]
+    def stats(name: str, group: str, stratum: str) -> list[float]:
+        mean, median, p95, bias, cells = error_stats(tallies[name].errors.get((group, stratum), []))
+        return [mean, median, p95, bias, int(cells)]
+
+    def block(group: str) -> list[dict[str, Any]]:
+        rows = []
         for stratum in STRATA:
-            per_seed = [error_stats(tallies[s].errors.get((group, stratum), [])) for s in seeds]
-            if per_seed[0][4] == 0:
-                rows.append(f"| {stratum} | all methods | no cells | | | | 0 |")
-                continue
-            rows.append(
-                f"| {stratum} | surrogate, {len(seeds)} seeds | "
-                + " | ".join(_spread([p[i] for p in per_seed], 3) for i in range(4))
-                + f" | {per_seed[0][4]} |"
-            )
-            for name in BASELINES:
-                st = error_stats(tallies[name].errors.get((group, stratum), []))
-                rows.append(
-                    f"| {stratum} | {name} | {st[0]:.3f} | {st[1]:.3f} | {st[2]:.3f} | "
-                    f"{st[3]:+.3f} | {st[4]} |"
-                )
+            row: dict[str, Any] = {
+                "stratum": stratum,
+                "surrogate": [stats(s, group, stratum) for s in seeds],
+                "baselines": {name: stats(name, group, stratum) for name in BASELINES},
+                "uncertainty": None,
+            }
             if (group, stratum) in uncertainty.terms:
                 t = uncertainty.terms[(group, stratum)]
-                rows.append(
-                    f"| {stratum} | ray tracer, fold term (quoted) | | {t['fold'][0]:.3f} | "
-                    f"{t['fold'][1]:.3f} | | |"
-                )
-                rows.append(
-                    f"| {stratum} | ray tracer, sampling floor (quoted) | | "
-                    f"{t['sampling'][0]:.3f} | {t['sampling'][1]:.3f} | | |"
-                )
+                row["uncertainty"] = {"fold": list(t["fold"]), "sampling": list(t["sampling"])}
+            rows.append(row)
         return rows
 
-    lines = [
-        f"# Evaluation on the {facts['split']} split",
-        "",
-        "Synthetic terrain, not a real place; one sector, no vegetation, buildings or "
-        "interference, flat Earth. Ground truth: Sionna RT, line of sight and specular "
-        f"reflection only ({'; '.join(facts['ray tracing'])}; map commits "
-        f"{', '.join(facts['commits'])}); pattern: 3GPP TR 38.901. Written by `twin evaluate`.",
-        "",
-        f"Maps: {facts['maps']} ({facts['grid maps']} grid, {facts['off-grid maps']} off-grid) "
-        f"on terrains {', '.join(str(t) for t in facts['terrains'])}. Surrogate: the "
-        f"best-epoch checkpoints of {', '.join(facts['runs'])}; each surrogate figure is the "
-        "mean over the seeds, with the lowest and highest seed in brackets.",
-        "",
-        "Errors are predicted minus traced path gain in dB, over cells where the ray tracer "
-        "has power. Strata: LOS direct-dominated and LOS reflection-dominated (traced gain "
-        f"at least {REFLECTION_EXCESS_DB:.0f} dB above B0, ASSUMPTION) and NLOS, by the "
-        "heightmap LOS mask. B0: free space plus the antenna pattern; B1: B0 minus the "
-        "Bullington diffraction loss (ITU-R P.526-16 section 4.5.1).",
-        "",
-        "The ray tracer's own uncertainty is quoted from `results/fold_check.md` (commit "
-        f"{uncertainty.commit}; training terrains, one azimuth and tilt): the fold term (the "
-        "map with the other cell diagonal) and the sampling floor (1e9 against 4e9 rays), "
-        "as median and p95 of the absolute difference. The sampling floor is split only LOS "
-        "and NLOS there, so both LOS strata quote the LOS value. Read the surrogate's errors "
-        "against these; they are not a claim that the surrogate beats the ray tracer.",
-        "",
-        "## E1 and E3: path-gain error by stratum, all grid maps",
-        "",
-        *e1_block("all"),
-        "",
-        reflection_note(tallies, seeds, uncertainty),
-        "",
-        "## E3: path-gain error by stratum, per site class",
-    ]
-    for site_class in SITE_CLASSES:
-        lines += ["", f"### {site_class}", "", *e1_block(site_class)]
-
-    lines += [
-        "",
-        "## E3: the no-signal class",
-        "",
-        "The surrogate's power head (logit above 0 means the ray tracer has power) against "
-        "the traced power mask, over all cells of the grid maps. B0 and B1 always predict "
-        "power, so they have no no-signal class.",
-        "",
-        "| group | power precision | power recall | no-signal precision | no-signal recall | "
-        "accuracy | cells with no signal |",
-        "|---|---|---|---|---|---|---|",
-    ]
-    for group in GROUPS:
-        stats = []
-        for s in seeds:
-            tp, fp, tn, fn = tallies[s].power[group]
-            stats.append(
-                (
-                    tp / (tp + fp),
-                    tp / (tp + fn),
-                    tn / (tn + fn),
-                    tn / (tn + fp),
-                    (tp + tn) / (tp + fp + tn + fn),
-                )
-            )
-        tp, fp, tn, fn = tallies[seeds[0]].power[group]
-        lines.append(
-            f"| {group} | "
-            + " | ".join(_spread([st[i] * 100 for st in stats], 2) + "%" for i in range(5))
-            + f" | {(tn + fp) / (tp + fp + tn + fn) * 100:.1f}% |"
-        )
-
-    lines += [
-        "",
-        "## E2: coverage",
-        "",
-        f"RSRP = {POWER_PER_RE_DBM:.2f} dBm per resource element ({SECTOR_POWER_DBM:.0f} dBm "
-        f"over {RESOURCE_ELEMENTS} resource elements of a 20 MHz carrier, ASSUMPTION) plus path "
-        f"gain; a cell is covered at {RSRP_THRESHOLD_DBM:.0f} dBm (ASSUMPTION), i.e. path gain "
-        f"of at least {COVERED_GAIN_DB:.2f} dB. The ray tracer's covered cells need power; the "
-        "surrogate's need its power head to say power; B0 and B1 always predict power. "
-        "Covered-area error: predicted minus traced covered cells over traced covered cells, "
-        "pooled over the grid maps. IoU: pooled, and the mean of per-map IoU.",
-        "",
-        "| method | covered-area error | IoU (pooled) | IoU (mean per map) |",
-        "|---|---|---|---|",
-    ]
-
-    def coverage(name: str) -> tuple[float, float, float]:
+    def coverage(name: str) -> list[float]:
         pred, true, both, either = tallies[name].coverage
-        return (pred - true) / true * 100, both / either, float(np.mean(tallies[name].iou))
-
-    cov = [coverage(s) for s in seeds]
-    lines.append(
-        f"| surrogate, {len(seeds)} seeds | {_spread([c[0] for c in cov], 2)}% | "
-        f"{_spread([c[1] for c in cov], 4)} | {_spread([c[2] for c in cov], 4)} |"
-    )
-    for name in BASELINES:
-        c = coverage(name)
-        lines.append(f"| {name} | {c[0]:+.2f}% | {c[1]:.4f} | {c[2]:.4f} |")
-
-    lines += ["", "## E4: off-grid tilts", ""]
-    if facts["off-grid maps"] == 0:
-        lines.append("Not in this split: off-grid tilts (1.5, 4.5, 7.5 deg) exist on test only.")
-    else:
-        lines += [
-            f"The {facts['off-grid maps']} off-grid maps (tilts 1.5, 4.5 and 7.5 deg), which "
-            "no model saw during training.",
-            "",
-            *e1_block("off-grid"),
+        return [
+            float((pred - true) / true * 100),
+            float(both / either),
+            float(np.mean(tallies[name].iou)),
         ]
 
-    lines += [
-        "",
-        "## E5: time per map, same machine",
-        "",
-        f"GPU: {timing.gpu_record['provenance']['gpu']}. Medians, in seconds. The ray tracer "
-        f"runs the dataset's settings ({timing.gpu_record['samples_per_tx']:.0e} rays): its "
-        "new-terrain figure covers terrain generation, scene and mesh build, measurement "
-        "surface and the first solve; further maps reuse the scene and time the solve only. "
-        "The surrogate's new-terrain figure covers geometry, LOS mask, B0, the per-map channels "
-        "and inference; further maps cover B0, the channels and inference. Both sides skip "
-        f"their warm-up (kernel compilation). GPU ray tracer: terrains "
-        f"{', '.join(str(t) for t in timing.gpu_record['terrains'])} through the Windows runner "
-        f"(commit {timing.gpu_record['provenance']['commit'][:7]}); CPU ray tracer: terrains "
-        f"{', '.join(str(t) for t in timing.cpu_record['terrains'])}, llvm, measured here.",
-        "",
-        "| hardware | case | ray tracer | surrogate | ray tracer / surrogate |",
-        "|---|---|---|---|---|",
-        *(
-            f"| {hw} | {case} | {rt:.3f} | {sg:.4f} | {rt / sg:.1f} |"
-            for hw, case, rt, sg in (
-                ("GPU", "new terrain, first map", timing.rt_gpu_new, gpu_new),
-                ("GPU", "each further map", timing.rt_gpu_further, gpu_further),
-                ("CPU", "new terrain, first map", timing.rt_cpu_new, cpu_new),
-                ("CPU", "each further map", timing.rt_cpu_further, cpu_further),
-            )
-        ),
-        "",
-        "Surrogate parts: geometry and LOS mask for a new terrain "
-        f"{timing.terrain_features:.3f}; B0 and channels per map {timing.map_inputs:.4f}; "
-        f"inference, batch 1, GPU {timing.surrogate_gpu:.4f} and CPU {timing.surrogate_cpu:.4f}.",
-        "",
-        "On this machine, per map, the ray tracer takes "
-        f"{timing.rt_gpu_new / gpu_new:.1f} times as long as the surrogate for a new terrain's "
-        f"first map and {timing.rt_gpu_further / gpu_further:.1f} times as long for each "
-        "further map on the GPU; without a GPU the ratios are "
-        f"{timing.rt_cpu_new / cpu_new:.1f} and {timing.rt_cpu_further / cpu_further:.1f}.",
-        "",
-        "## Per seed, all grid maps",
-        "",
-        "| seed | mean abs, all | mean abs, LOS direct | mean abs, LOS reflection | "
-        "mean abs, NLOS | power accuracy |",
-        "|---|---|---|---|---|---|",
-    ]
-    for s in seeds:
-        tp, fp, tn, fn = tallies[s].power["all"]
-        means = [error_stats(tallies[s].errors[("all", st)])[0] for st in STRATA]
-        lines.append(
-            f"| {s} | "
-            + " | ".join(f"{m:.3f}" for m in means)
-            + f" | {(tp + tn) / (tp + fp + tn + fn) * 100:.2f}% |"
-        )
-    return "\n".join(lines) + "\n"
+    return {
+        "kind": "evaluation",
+        "rescored_note": None,
+        "facts": facts,
+        "seeds": seeds,
+        "baselines": list(BASELINES),
+        "strata": list(STRATA),
+        "site_classes": list(SITE_CLASSES),
+        "groups": list(GROUPS),
+        "reflection_excess_db": REFLECTION_EXCESS_DB,
+        "uncertainty_commit": uncertainty.commit,
+        "blocks": {group: block(group) for group in ("all", *SITE_CLASSES, "off-grid")},
+        "reflection": reflection_values(tallies, seeds, uncertainty),
+        "power": {
+            group: {s: [int(n) for n in tallies[s].power[group]] for s in seeds} for group in GROUPS
+        },
+        "coverage": {name: coverage(name) for name in (*seeds, *BASELINES)},
+        "power_per_re_dbm": POWER_PER_RE_DBM,
+        "sector_power_dbm": SECTOR_POWER_DBM,
+        "resource_elements": RESOURCE_ELEMENTS,
+        "rsrp_threshold_dbm": RSRP_THRESHOLD_DBM,
+        "covered_gain_db": COVERED_GAIN_DB,
+        "timing": {
+            k: v for k, v in asdict(timing).items() if k not in ("gpu_record", "cpu_record")
+        },
+        "gpu_record": {
+            "gpu": timing.gpu_record["provenance"]["gpu"],
+            "commit": timing.gpu_record["provenance"]["commit"],
+            "samples_per_tx": timing.gpu_record["samples_per_tx"],
+            "terrains": timing.gpu_record["terrains"],
+        },
+        "cpu_terrains": timing.cpu_record["terrains"],
+        "per_seed": {
+            s: {
+                "means": [stats(s, "all", st)[0] for st in STRATA],
+                "power": [int(n) for n in tallies[s].power["all"]],
+            }
+            for s in seeds
+        },
+    }
 
 
 FIGURE_AZIMUTH_DEG = 90.0
@@ -723,16 +590,12 @@ def evaluation_figure(dataset: Path, split: str, run: Path, caption: str, path: 
     plt.close(fig)
 
 
-_BACKEND_ROW = re.compile(
-    r"^\| \d+ \| [\d.e+]+ \| ([\d.]+) \| ([\d.]+) \| [\d.]+ \| \d+ \| ([\d.]+) \| ([\d.]+) \|"
-)
-
-
 def backend_agreement(backend_report: Path) -> tuple[float, float]:
     """Largest median and p95 of |llvm - cuda| over all rows of the committed backend check.
 
     Args:
-        backend_report: results/backend_check.md.
+        backend_report: results/backend_check.md (its data, results/backend_check.json, is
+            read).
 
     Returns:
         (largest median, largest p95), in dB, over LOS and NLOS cells of every row.
@@ -740,11 +603,13 @@ def backend_agreement(backend_report: Path) -> tuple[float, float]:
     Raises:
         ValueError: If the report has no agreement rows.
     """
+    data = read_report(backend_report)
     medians, p95s = [], []
-    for line in backend_report.read_text().splitlines():
-        if m := _BACKEND_ROW.match(line):
-            medians += [float(m.group(1)), float(m.group(3))]
-            p95s += [float(m.group(2)), float(m.group(4))]
+    for row in data["agreement"]:
+        for region in ("los", "nlos"):
+            if row[region]["cells"]:
+                medians.append(row[region]["median"])
+                p95s.append(row[region]["p95"])
     if not medians:
         raise ValueError(f"no agreement rows in {backend_report}")
     return max(medians), max(p95s)

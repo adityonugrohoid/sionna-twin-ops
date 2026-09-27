@@ -8,8 +8,9 @@ import numpy as np
 import pytest
 
 from sionna_twin_ops.backend import DEFAULT_VARIANT
-from sionna_twin_ops.crosscheck import META, TERRAIN_IDS, compare_markdown
+from sionna_twin_ops.crosscheck import META, TERRAIN_IDS, compare_data
 from sionna_twin_ops.provenance import commit, provenance
+from sionna_twin_ops.reports import render
 
 
 def test_commit_prefers_the_runner_pin(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -56,7 +57,7 @@ def fake_run(path: Path, variant: str, scale: float) -> None:
 def test_identical_runs_agree_exactly(tmp_path: Path) -> None:
     fake_run(tmp_path / "a", "llvm", 1.0)
     fake_run(tmp_path / "b", "cuda", 1.0)
-    report = compare_markdown(tmp_path / "a", tmp_path / "b")
+    report = render(compare_data(tmp_path / "a", tmp_path / "b"))
     assert "| 3 | 1e+07 | 0.000 | 0.000 | 0.000 |" in report
     assert "llvm" in report and "cuda" in report
 
@@ -64,7 +65,7 @@ def test_identical_runs_agree_exactly(tmp_path: Path) -> None:
 def test_a_uniform_2x_gain_reads_as_3_db(tmp_path: Path) -> None:
     fake_run(tmp_path / "a", "llvm", 1.0)
     fake_run(tmp_path / "b", "cuda", 2.0)
-    report = compare_markdown(tmp_path / "a", tmp_path / "b")
+    report = render(compare_data(tmp_path / "a", tmp_path / "b"))
     assert "| 3 | 1e+07 | 3.010 | 3.010 | 3.010 |" in report
 
 
@@ -75,4 +76,4 @@ def test_runs_with_different_settings_are_refused(tmp_path: Path) -> None:
     meta["settings"]["seed"] = 2
     (tmp_path / "b" / META).write_text(json.dumps(meta))
     with pytest.raises(ValueError, match="differ"):
-        compare_markdown(tmp_path / "a", tmp_path / "b")
+        compare_data(tmp_path / "a", tmp_path / "b")

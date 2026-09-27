@@ -1,7 +1,8 @@
 """Ray-tracer checks: the flat-plain tilt check (spec A4), the measurement-surface check
 (spec S5), and time per map plus the sampling floor (spec N3). All on synthetic geometry."""
 
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -440,15 +441,15 @@ LOBE_TOLERANCE_DEG = 1.0  # spec A4
 MIN_FAR_FIELD_SPAN_DB = 6.0  # spec A4
 
 
-def solver_check_markdown(
+def solver_check_data(
     tilt_rows: list[TiltRow],
     surface: SurfaceCheck,
     floor_rows: list[FloorRow],
     settings: SolverSettings,
     lobe_samples: int,
-    header: str,
-) -> str:
-    """Render the solver checks as markdown, with pass or fail computed from the numbers.
+    provenance: dict[str, Any],
+) -> dict[str, Any]:
+    """The solver checks' report data; pass or fail is computed from the numbers.
 
     Args:
         tilt_rows: Output of `tilt_check`.
@@ -456,120 +457,35 @@ def solver_check_markdown(
         floor_rows: Output of `sampling_floor`.
         settings: Settings of the A4 and S5 maps.
         lobe_samples: Rays per free-space main-lobe measurement.
-        header: Provenance lines placed under the title.
+        provenance: Where the checks ran (`provenance.provenance()`).
 
     Returns:
-        Markdown text.
+        JSON-safe data for `reports.solver_check_markdown`.
     """
     lobe_error = max(abs(r.lobe_elevation_deg + r.tilt_deg) for r in tilt_rows)
     medians = [r.far_field_median_db for r in tilt_rows]
     span = max(medians) - min(medians)
-    a4_pass = lobe_error <= LOBE_TOLERANCE_DEG and span >= MIN_FAR_FIELD_SPAN_DB
-
-    def verdict(ok: bool) -> str:
-        return "PASS" if ok else "FAIL"
-
-    def stats(d: DiffStats) -> str:
-        return f"{d.median_db:.1e} | {d.p95_db:.1e} | {d.bias_db:+.1e} | {d.valid * 100:.1f}%"
-
-    lines = [
-        "# Solver check",
-        "",
-        header,
-        "",
-        "Settings of the A4 and S5 maps:",
-        "",
-        "| setting | value |",
-        "|---|---|",
-        *(f"| {key} | {value} |" for key, value in settings.record().items()),
-        "",
-        f"Main-lobe measurements: free space, {lobe_samples:.0e} rays, a vertical planar map "
-        f"{LOBE_DISTANCE_M:.0f} m out on boresight with 1 m cells.",
-        "",
-        f"## A4 flat-plain tilt check: {verdict(a4_pass)}",
-        "",
-        f"Criteria: main-lobe elevation within {LOBE_TOLERANCE_DEG} deg of the commanded tilt; "
-        f"far-field median moves by at least {MIN_FAR_FIELD_SPAN_DB} dB across the tilts. "
-        f"Far field (ASSUMPTION): cells {FAR_FIELD_RANGE_M[0]:.0f} to {FAR_FIELD_RANGE_M[1]:.0f} m "
-        f"from the site within {FAR_FIELD_HALF_ANGLE_DEG:.0f} deg of boresight.",
-        "",
-        "| tilt (deg) | main-lobe elevation (deg) | error (deg) | far-field median (dB) | "
-        "far-field cells hit |",
-        "|---|---|---|---|---|",
-    ]
-    for r in tilt_rows:
-        lines.append(
-            f"| {r.tilt_deg:.0f} | {r.lobe_elevation_deg:+.2f} | "
-            f"{r.lobe_elevation_deg + r.tilt_deg:+.2f} | {r.far_field_median_db:.2f} | "
-            f"{r.far_field_valid * 100:.1f}% |"
-        )
-    lines += [
-        "",
-        f"Largest lobe error {lobe_error:.2f} deg; far-field span {span:.1f} dB. The median is "
-        "not monotonic in tilt: the 8-element, 0.8-wavelength column has nulls about 9 deg "
-        "apart, so as the lobe tilts down the far-field ring passes through the first null "
-        "and then the first side lobe.",
-        "",
-        "## S5 measurement-surface check",
-        "",
-        "Flat tile. The mesh surface at 1.5 m against a planar radio map at 1.5 m, same "
-        "cells and settings; the two-seed spreads show the noise each map has on its own. "
-        "Values in dB over cells with power in both maps.",
-        "",
-        "| comparison | median abs | p95 abs | bias | cells |",
-        "|---|---|---|---|---|",
-        f"| mesh surface vs planar map | {stats(surface.surface_vs_planar)} |",
-        f"| planar map, seed vs seed + 1 | {stats(surface.planar_noise)} |",
-        f"| mesh surface, seed vs seed + 1 | {stats(surface.surface_noise)} |",
-        "",
-        "## Time per map and the sampling floor (N3)",
-        "",
-        f"Terrains {', '.join(str(r.terrain_id) for r in floor_rows)}, azimuth "
-        f"{CHECK_AZIMUTH_DEG:.0f}, tilt {FLOOR_TILT_DEG:.0f}, the ruled settings (line of "
-        "sight and specular reflection, max_depth 3), compared over cells with power in "
-        "both, overall and split by the LOS mask (see `baselines.py`).",
-        "",
-        f"The floor compares the dataset's {DATASET_SAMPLES:.0e} rays with "
-        f"{REFERENCE_SAMPLES:.0e}. A larger reference is not possible: Mitsuba's sampler "
-        f"wavefront is 32-bit, so one solve launches at most {MAX_SAMPLES_PER_TX} rays, and "
-        "repeating solves adds nothing because the rays come from the same deterministic "
-        "lattice each time (the seed does not change these maps). A 4x step understates "
-        "the error against the fully converged map more than the earlier 10x step "
-        f"({CONTEXT_SAMPLES:.0e} vs {DATASET_SAMPLES:.0e}) did; that step is listed after "
-        "the main table as context. A lattice with a different ray count points its rays in "
-        "different directions rather than adding to the old ones, so a grazing cell reached "
-        "by a single ray at one count can be missed at another: that is why a cell or two "
-        "can have power at the smaller count only.",
-        "",
-        "| terrain | site | "
-        + " | ".join(f"s/map {n:.0e}" for n in FLOOR_SAMPLES)
-        + " | floor median / p95 | LOS median / p95 (cells) | NLOS median / p95 (cells) | "
-        f"no-hit {DATASET_SAMPLES:.0e} | no-hit {REFERENCE_SAMPLES:.0e} | "
-        f"hit only at {REFERENCE_SAMPLES:.0e} | hit only at {DATASET_SAMPLES:.0e} |",
-        "|" + "---|" * (2 + len(FLOOR_SAMPLES) + 7),
-    ]
-    for f in floor_rows:
-        seconds = " | ".join(f"{t:.2f}" for t in f.seconds)
-        lines.append(
-            f"| {f.terrain_id} | {f.site_class} | {seconds} | "
-            f"{f.floor.median_db:.3f} / {f.floor.p95_db:.3f} | "
-            f"{f.floor_los.median_db:.3f} / {f.floor_los.p95_db:.3f} ({f.floor_los.cells}) | "
-            f"{f.floor_nlos.median_db:.3f} / {f.floor_nlos.p95_db:.3f} ({f.floor_nlos.cells}) | "
-            f"{f.no_hit[0] * 100:.2f}% | {f.no_hit[1] * 100:.2f}% | {f.hit_only_at_reference} | "
-            f"{f.hit_only_at_dataset} |"
-        )
-    lines += [
-        "",
-        f"Context, {CONTEXT_SAMPLES:.0e} against {DATASET_SAMPLES:.0e}:",
-        "",
-        "| terrain | site | LOS median / p95 (cells) | NLOS median / p95 (cells) |",
-        "|---|---|---|---|",
-    ]
-    for f in floor_rows:
-        lines.append(
-            f"| {f.terrain_id} | {f.site_class} | "
-            f"{f.context_los.median_db:.3f} / {f.context_los.p95_db:.3f} ({f.context_los.cells}) | "
-            f"{f.context_nlos.median_db:.3f} / {f.context_nlos.p95_db:.3f} "
-            f"({f.context_nlos.cells}) |"
-        )
-    return "\n".join(lines) + "\n"
+    return {
+        "kind": "solver_check",
+        "provenance": provenance,
+        "settings": settings.record(),
+        "lobe_samples": lobe_samples,
+        "lobe_distance_m": LOBE_DISTANCE_M,
+        "lobe_tolerance_deg": LOBE_TOLERANCE_DEG,
+        "min_far_field_span_db": MIN_FAR_FIELD_SPAN_DB,
+        "far_field_range_m": list(FAR_FIELD_RANGE_M),
+        "far_field_half_angle_deg": FAR_FIELD_HALF_ANGLE_DEG,
+        "check_azimuth_deg": CHECK_AZIMUTH_DEG,
+        "floor_tilt_deg": FLOOR_TILT_DEG,
+        "dataset_samples": DATASET_SAMPLES,
+        "reference_samples": REFERENCE_SAMPLES,
+        "max_samples_per_tx": MAX_SAMPLES_PER_TX,
+        "context_samples": CONTEXT_SAMPLES,
+        "floor_samples": list(FLOOR_SAMPLES),
+        "lobe_error_deg": lobe_error,
+        "far_field_span_db": span,
+        "a4_pass": lobe_error <= LOBE_TOLERANCE_DEG and span >= MIN_FAR_FIELD_SPAN_DB,
+        "tilt_rows": [asdict(r) for r in tilt_rows],
+        "surface": asdict(surface),
+        "floor_rows": [asdict(f) for f in floor_rows],
+    }

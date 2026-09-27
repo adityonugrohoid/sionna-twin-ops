@@ -1,0 +1,260 @@
+{
+ "kind": "solver_check",
+ "provenance": {
+  "commit": "caf8c0b6f9d743e6a0219c8078c77aa77336b0d1",
+  "variant": "cuda_ad_mono_polarized",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "python": "3.13.12",
+  "sionna-rt": "2.1.0",
+  "mitsuba": "3.9.1",
+  "drjit": "1.5.0",
+  "numpy": "2.5.3",
+  "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU, driver 616.56"
+ },
+ "settings": {
+  "variant": "cuda_ad_mono_polarized",
+  "samples_per_tx": 10000000,
+  "max_depth": 3,
+  "los": true,
+  "specular_reflection": true,
+  "diffuse_reflection": false,
+  "refraction": false,
+  "diffraction": false,
+  "edge_diffraction": false,
+  "seed": 1
+ },
+ "lobe_samples": 100000000,
+ "lobe_distance_m": 200.0,
+ "lobe_tolerance_deg": 1.0,
+ "min_far_field_span_db": 6.0,
+ "far_field_range_m": [
+  1500.0,
+  2500.0
+ ],
+ "far_field_half_angle_deg": 60.0,
+ "check_azimuth_deg": 90.0,
+ "floor_tilt_deg": 6.0,
+ "dataset_samples": 1000000000,
+ "reference_samples": 4000000000,
+ "max_samples_per_tx": 4294967295,
+ "context_samples": 100000000,
+ "floor_samples": [
+  10000000,
+  100000000,
+  1000000000,
+  4000000000
+ ],
+ "lobe_error_deg": 0.3300774082751339,
+ "far_field_span_db": 20.02988986545445,
+ "a4_pass": true,
+ "tilt_rows": [
+  {
+   "tilt_deg": 0.0,
+   "lobe_elevation_deg": 0.02043462064788322,
+   "far_field_median_db": -87.03535862362685,
+   "far_field_valid": 1.0
+  },
+  {
+   "tilt_deg": 3.0,
+   "lobe_elevation_deg": -2.929049176803753,
+   "far_field_median_db": -87.75257481648845,
+   "far_field_valid": 1.0
+  },
+  {
+   "tilt_deg": 6.0,
+   "lobe_elevation_deg": -5.864268068849074,
+   "far_field_median_db": -92.24860963293565,
+   "far_field_valid": 1.0
+  },
+  {
+   "tilt_deg": 9.0,
+   "lobe_elevation_deg": -8.789390333408994,
+   "far_field_median_db": -107.0652484890813,
+   "far_field_valid": 1.0
+  },
+  {
+   "tilt_deg": 12.0,
+   "lobe_elevation_deg": -11.669922591724866,
+   "far_field_median_db": -101.72275462271853,
+   "far_field_valid": 1.0
+  }
+ ],
+ "surface": {
+  "surface_vs_planar": {
+   "median_db": 2.2196816473751824e-07,
+   "p95_db": 1.2780191006811472e-06,
+   "bias_db": 4.337206885102023e-06,
+   "valid": 1.0,
+   "cells": 16384
+  },
+  "planar_noise": {
+   "median_db": 0.0,
+   "p95_db": 5.12323451573593e-07,
+   "bias_db": 6.236222736127894e-11,
+   "valid": 1.0,
+   "cells": 16384
+  },
+  "surface_noise": {
+   "median_db": 0.0,
+   "p95_db": 3.3453785093229196e-07,
+   "bias_db": -3.586541827416134e-10,
+   "valid": 1.0,
+   "cells": 16384
+  }
+ },
+ "floor_rows": [
+  {
+   "terrain_id": 3,
+   "site_class": "hilltop",
+   "seconds": [
+    0.013498800006345846,
+    0.10808059999544639,
+    1.0470441000070423,
+    4.1362790999992285
+   ],
+   "floor": {
+    "median_db": 0.004551897810038952,
+    "p95_db": 0.09095116622817678,
+    "bias_db": -0.00269676852369946,
+    "valid": 0.3985595703125,
+    "cells": 6530
+   },
+   "floor_los": {
+    "median_db": 0.003904380498113369,
+    "p95_db": 0.059163091962619714,
+    "bias_db": -0.002371419258901455,
+    "valid": 1.0,
+    "cells": 5609
+   },
+   "floor_nlos": {
+    "median_db": 0.015777183106024495,
+    "p95_db": 0.5871997672703912,
+    "bias_db": -0.004678184404537691,
+    "valid": 0.08547563805104408,
+    "cells": 921
+   },
+   "context_los": {
+    "median_db": 0.019405089112893847,
+    "p95_db": 0.31419018645314906,
+    "bias_db": 0.002758009049488389,
+    "valid": 0.9998217151007309,
+    "cells": 5608
+   },
+   "context_nlos": {
+    "median_db": 0.09398645658797022,
+    "p95_db": 1.8742952952939733,
+    "bias_db": 0.06822618318947773,
+    "valid": 0.08352668213457076,
+    "cells": 900
+   },
+   "no_hit": [
+    0.60137939453125,
+    0.60101318359375
+   ],
+   "hit_only_at_reference": 7,
+   "hit_only_at_dataset": 1
+  },
+  {
+   "terrain_id": 1,
+   "site_class": "slope",
+   "seconds": [
+    0.01640639999823179,
+    0.10298480000346899,
+    1.0383966000081273,
+    4.125951299996814
+   ],
+   "floor": {
+    "median_db": 0.0049435399272113045,
+    "p95_db": 0.11378721870049446,
+    "bias_db": 0.007130806413001,
+    "valid": 0.17584228515625,
+    "cells": 2881
+   },
+   "floor_los": {
+    "median_db": 0.004272276767800065,
+    "p95_db": 0.06594941158255452,
+    "bias_db": 0.0036749998194045026,
+    "valid": 0.9982142857142857,
+    "cells": 2236
+   },
+   "floor_nlos": {
+    "median_db": 0.012014976317686887,
+    "p95_db": 0.3961509964668578,
+    "bias_db": 0.01911093593746886,
+    "valid": 0.04560237556561086,
+    "cells": 645
+   },
+   "context_los": {
+    "median_db": 0.01737734995227669,
+    "p95_db": 0.23757008377521416,
+    "bias_db": 0.005668736802906166,
+    "valid": 0.9982142857142857,
+    "cells": 2236
+   },
+   "context_nlos": {
+    "median_db": 0.06172030811142548,
+    "p95_db": 1.4768316221376758,
+    "bias_db": 0.030124538371263544,
+    "valid": 0.044400452488687785,
+    "cells": 628
+   },
+   "no_hit": [
+    0.8240966796875,
+    0.82391357421875
+   ],
+   "hit_only_at_reference": 4,
+   "hit_only_at_dataset": 1
+  },
+  {
+   "terrain_id": 5,
+   "site_class": "valley",
+   "seconds": [
+    0.014324999996460974,
+    0.08649729999888223,
+    0.8659691000066232,
+    3.4836264999903506
+   ],
+   "floor": {
+    "median_db": 0.006115337297927681,
+    "p95_db": 0.13826476897653478,
+    "bias_db": 0.0015199049242843236,
+    "valid": 0.43499755859375,
+    "cells": 7127
+   },
+   "floor_los": {
+    "median_db": 0.005338755427516162,
+    "p95_db": 0.08333709651870862,
+    "bias_db": -0.0029964739898720788,
+    "valid": 0.9996728819103696,
+    "cells": 6112
+   },
+   "floor_nlos": {
+    "median_db": 0.019245201628336872,
+    "p95_db": 0.8250131711701751,
+    "bias_db": 0.02871607036598278,
+    "valid": 0.0988315481986368,
+    "cells": 1015
+   },
+   "context_los": {
+    "median_db": 0.030185288093761642,
+    "p95_db": 0.3909396650300252,
+    "bias_db": -0.009339562021953636,
+    "valid": 0.9995093228655545,
+    "cells": 6111
+   },
+   "context_nlos": {
+    "median_db": 0.11053938374048755,
+    "p95_db": 1.7429562674856234,
+    "bias_db": -0.013602661712031894,
+    "valid": 0.09444985394352483,
+    "cells": 970
+   },
+   "no_hit": [
+    0.56500244140625,
+    0.5645751953125
+   ],
+   "hit_only_at_reference": 7,
+   "hit_only_at_dataset": 0
+  }
+ ]
+}

@@ -340,16 +340,16 @@ def train(
     return record
 
 
-def training_summary_markdown(runs: list[Path], context_runs: list[Path]) -> str:
+def training_summary_data(runs: list[Path], context_runs: list[Path]) -> dict[str, Any]:
     """The committed record of the training runs: settings, best epochs, spread across seeds.
 
     Args:
+        runs: Run directories, one per seed.
         context_runs: Earlier run directories quoted as context from their own records
             (not retrained, not recomputed); empty for none.
-        runs: Run directories, one per seed.
 
     Returns:
-        Markdown text.
+        JSON-safe data for `reports.training_summary_markdown`: the run records as written.
 
     Raises:
         ValueError: If the runs differ in anything but the seed.
@@ -360,113 +360,10 @@ def training_summary_markdown(runs: list[Path], context_runs: list[Path]) -> str
         others = {k: v for k, v in meta["hyperparameters"].items() if k != "seed"}
         if others != shared or meta["dataset"] != metas[0]["dataset"]:
             raise ValueError("runs differ in settings or dataset, not only in seed")
-    best = [meta["best"] for meta in metas]
-
-    def spread(key: str) -> str:
-        values = np.array([b[key] for b in best])
-        return f"{values.mean():.3f} (min {values.min():.3f}, max {values.max():.3f})"
-
-    lines = [
-        "# Training summary",
-        "",
-        "Synthetic terrain. The surrogate is a U-Net predicting the ray-traced path gain as a "
-        "residual over B0, plus a logit for whether the ray tracer has power in each cell "
-        "(spec M1, M1b). Trained on the train split, best epoch chosen on validation; the "
-        "test split is not touched here. Written by `twin training-summary`.",
-        "",
-        "| setting | value |",
-        "|---|---|",
-        *(f"| {k} | {v} |" for k, v in shared.items()),
-        f"| dataset | {metas[0]['dataset']['path']} (manifest sha256 "
-        f"{metas[0]['dataset']['manifest_sha256'][:16]}...) |",
-        f"| maps | train {metas[0]['maps']['train']}, "
-        f"validation {metas[0]['maps']['validation']} |",
-        "",
-        "| provenance | values seen |",
-        "|---|---|",
-        *(
-            f"| {k} | {'; '.join(sorted({str(m['provenance'][k]) for m in metas}))} |"
-            for k in metas[0]["provenance"]
-        ),
-        "",
-        "## Best epoch per seed (validation)",
-        "",
-        "L1 is the mean absolute error in dB over validation cells where the ray tracer has "
-        "power; power accuracy is the share of all validation cells whose power logit has "
-        "the right sign. LOS cells are direct-dominated when the traced gain is less than "
-        f"{REFLECTION_EXCESS_DB:.0f} dB above B0 and reflection-dominated otherwise "
-        "(ASSUMPTION, the rule of `twin fold-check`).",
-        "",
-        "| seed | best epoch | L1 (dB) | NLOS L1 (dB) | LOS direct L1 (dB) | "
-        "LOS reflection L1 (dB) | BCE | power accuracy | total loss | last epoch: L1 (dB) | "
-        "last epoch: BCE | last epoch: power accuracy | peak RSS after load (MiB) | seconds |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
-    ]
-    for meta in metas:
-        b = meta["best"]
-
-        def recorded(key: str, best: dict[str, Any] = b) -> str:
-            return f"{best[key]:.3f}" if key in best else "not recorded"
-
-        last = meta["history"][-1]
-        rss = meta.get("peak_rss_mib_after_load", "not recorded")
-        lines.append(
-            f"| {meta['hyperparameters']['seed']} | {b['epoch']} | {b['l1_db']:.3f} | "
-            f"{recorded('l1_nlos_db')} | {recorded('l1_los_direct_db')} | "
-            f"{recorded('l1_los_reflection_db')} | "
-            f"{b['bce']:.4f} | {b['power_accuracy'] * 100:.2f}% | {b['total']:.4f} | "
-            f"{last['l1_db']:.3f} (epoch {last['epoch']}) | {last['bce']:.4f} | "
-            f"{last['power_accuracy'] * 100:.2f}% | {rss} | "
-            f"{meta['seconds']['total']:.0f} |"
-        )
-    lines += [
-        "",
-        f"Across seeds: L1 {spread('l1_db')} dB; power accuracy {spread('power_accuracy')}; "
-        f"BCE {spread('bce')}.",
-        "",
-        overfitting_note(metas),
-    ]
-    if context_runs:
-        context = [json.loads((run / "meta.json").read_text()) for run in context_runs]
-        commits = sorted({m["provenance"]["commit"][:7] for m in context})
-        augmentations = sorted({m["hyperparameters"].get("augmentation", "none") for m in context})
-        lines += [
-            "",
-            "## Context: earlier runs, quoted",
-            "",
-            f"Quoted from the run records of commit {', '.join(commits)} (augmentation "
-            f"{', '.join(augmentations)}), not retrained or recomputed here.",
-            "",
-            "| seed | best epoch | L1 (dB) | power accuracy | L1 at last epoch (dB) |",
-            "|---|---|---|---|---|",
-        ]
-        for meta in context:
-            b, last = meta["best"], meta["history"][-1]
-            lines.append(
-                f"| {meta['hyperparameters']['seed']} | {b['epoch']} | {b['l1_db']:.3f} | "
-                f"{b['power_accuracy'] * 100:.2f}% | {last['l1_db']:.3f} (epoch {last['epoch']}) |"
-            )
-    return "\n".join(lines) + "\n"
-
-
-def overfitting_note(metas: list[dict[str, Any]]) -> str:
-    """One sentence on where the seeds peak and what happens after, from their histories.
-
-    Args:
-        metas: Run records, the first of which supplies the example numbers.
-
-    Returns:
-        The sentence.
-    """
-    epochs = [meta["best"]["epoch"] for meta in metas]
-    first = metas[0]
-    history = first["history"]
-    best = first["best"]["epoch"]
-    at_best, last = history[best - 1], history[-1]
-    return (
-        f"All {len(metas)} seeds peak at epochs {min(epochs)}-{max(epochs)} and overfit after: "
-        f"for seed {first['hyperparameters']['seed']}, validation L1 goes from "
-        f"{at_best['l1_db']:.3f} dB at epoch {best} to {last['l1_db']:.3f} dB at epoch "
-        f"{last['epoch']}, while the training loss falls from {at_best['train_total']:.3f} to "
-        f"{last['train_total']:.3f}. The saved weights are those of the best epoch."
-    )
+    return {
+        "kind": "training_summary",
+        "reflection_excess_db": REFLECTION_EXCESS_DB,
+        "runs": [str(run) for run in runs],
+        "metas": metas,
+        "context": [json.loads((run / "meta.json").read_text()) for run in context_runs],
+    }

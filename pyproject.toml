@@ -25,7 +25,11 @@ packages = ["src/sionna_twin_ops"]
 
 [dependency-groups]
 dev = [
+    "ipykernel>=7.3.0",
+    "jupytext>=1.19.5",
     "mypy>=1.20",
+    "nbmake>=1.5.5",
+    "nbstripout>=0.9.1",
     "pre-commit>=4.3",
     "pytest>=8.4",
     "ruff>=0.14",
@@ -48,5 +52,5 @@ strict = true
 files = ["src", "tests"]
 
 [[tool.mypy.overrides]]
-module = ["sionna.*", "mitsuba.*", "drjit.*"]
+module = ["sionna.*", "mitsuba.*", "drjit.*", "jupytext.*"]
 ignore_missing_imports = true
