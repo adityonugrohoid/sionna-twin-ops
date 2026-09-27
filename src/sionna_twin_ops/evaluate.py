@@ -31,6 +31,8 @@ RESOURCE_ELEMENTS = 1200  # ASSUMPTION (spec E2): 20 MHz carrier
 RSRP_THRESHOLD_DBM = -110.0  # ASSUMPTION (spec E2)
 POWER_PER_RE_DBM = SECTOR_POWER_DBM - 10.0 * np.log10(RESOURCE_ELEMENTS)
 COVERED_GAIN_DB = RSRP_THRESHOLD_DBM - POWER_PER_RE_DBM  # path gain that clears the threshold
+INFERENCE_WARMUP = 20
+INFERENCE_TIMED = 200
 STRATA = ("all", "LOS direct", "LOS reflection", "NLOS")
 BASELINES = ("B0", "B1")
 
@@ -364,14 +366,14 @@ def measure_timing(dataset: Path, split: str, run: Path, cpu_trace_maps: int) ->
         batch = torch.from_numpy(x[None]).to(device)
         times = []
         with torch.no_grad():
-            for i in range(25):
+            for i in range(INFERENCE_WARMUP + INFERENCE_TIMED):
                 if device.type == "cuda":
                     torch.cuda.synchronize()
                 start = time.perf_counter()
                 model(batch)
                 if device.type == "cuda":
                     torch.cuda.synchronize()
-                if i >= 5:  # the first calls warm up kernels and allocators
+                if i >= INFERENCE_WARMUP:  # warm-up calls settle kernels, clocks, allocators
                     times.append(time.perf_counter() - start)
         return statistics.median(times)
 
