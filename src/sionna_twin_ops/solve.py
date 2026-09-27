@@ -54,8 +54,8 @@ def precoding_vec(weights: np.ndarray) -> tuple[mi.Float, mi.Float]:
     return mi.Float(weights.real.astype(np.float32)), mi.Float(weights.imag.astype(np.float32))
 
 
-DATASET_SAMPLES = 10**9  # owner ruling (spec N7): dataset maps, on the GPU
-DEV_SAMPLES = 10**7  # owner ruling: tests and development runs
+DATASET_SAMPLES = 10**9  # dataset rule N7 (docs/dataset.md): dataset maps, on the GPU
+DEV_SAMPLES = 10**7  # dataset rule N6 (docs/dataset.md): tests and development runs
 # Mitsuba's sampler takes a 32-bit wavefront size, so one transmitter can launch at most
 # 2**32 - 1 rays per solve; the Fibonacci ray lattice makes repeated solves identical.
 MAX_SAMPLES_PER_TX = 2**32 - 1
