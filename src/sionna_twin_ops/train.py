@@ -398,9 +398,9 @@ def training_summary_markdown(runs: list[Path], context_runs: list[Path]) -> str
         "(ASSUMPTION, the rule of `twin fold-check`).",
         "",
         "| seed | best epoch | L1 (dB) | NLOS L1 (dB) | LOS direct L1 (dB) | "
-        "LOS reflection L1 (dB) | BCE | power accuracy | total loss | L1 at last epoch (dB) | "
-        "seconds |",
-        "|---|---|---|---|---|---|---|---|---|---|---|",
+        "LOS reflection L1 (dB) | BCE | power accuracy | total loss | last epoch: L1 (dB) | "
+        "last epoch: BCE | last epoch: power accuracy | peak RSS after load (MiB) | seconds |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for meta in metas:
         b = meta["best"]
@@ -409,12 +409,15 @@ def training_summary_markdown(runs: list[Path], context_runs: list[Path]) -> str
             return f"{best[key]:.3f}" if key in best else "not recorded"
 
         last = meta["history"][-1]
+        rss = meta.get("peak_rss_mib_after_load", "not recorded")
         lines.append(
             f"| {meta['hyperparameters']['seed']} | {b['epoch']} | {b['l1_db']:.3f} | "
             f"{recorded('l1_nlos_db')} | {recorded('l1_los_direct_db')} | "
             f"{recorded('l1_los_reflection_db')} | "
             f"{b['bce']:.4f} | {b['power_accuracy'] * 100:.2f}% | {b['total']:.4f} | "
-            f"{last['l1_db']:.3f} (epoch {last['epoch']}) | {meta['seconds']['total']:.0f} |"
+            f"{last['l1_db']:.3f} (epoch {last['epoch']}) | {last['bce']:.4f} | "
+            f"{last['power_accuracy'] * 100:.2f}% | {rss} | "
+            f"{meta['seconds']['total']:.0f} |"
         )
     lines += [
         "",
