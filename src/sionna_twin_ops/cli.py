@@ -499,6 +499,11 @@ def main(argv: list[str] | None = None) -> int:
     s_rep.add_argument(
         "--out-dir", type=Path, required=True, help="writes search_<split>.md and figures/"
     )
+    summary_cmd = commands.add_parser(
+        "summary", help="write results/SUMMARY.md from the committed reports' data"
+    )
+    summary_cmd.add_argument("--results", type=Path, required=True, help="results directory")
+    summary_cmd.add_argument("--out", type=Path, required=True, help="markdown file to write")
     args = parser.parse_args(argv)
 
     if args.command == "env":
@@ -628,6 +633,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "search-report":
         search_report_command(args)
+        return 0
+    if args.command == "summary":
+        from sionna_twin_ops.summary import summary_markdown
+
+        text = summary_markdown(args.results)
+        args.out.write_text(text, newline="\n")
+        sys.stdout.write(text)
         return 0
     raise AssertionError(f"unhandled command {args.command!r}")
 

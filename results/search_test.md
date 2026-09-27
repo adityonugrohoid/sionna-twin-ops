@@ -123,16 +123,16 @@ The ray tracer's optimum uses 46 dBm in 71 of 72 cases; its tilt ranges 0 to 6 d
 
 ## Wall time per terrain, same machine
 
-Seconds per terrain for the whole search (8 azimuths). Surrogate: terrain generation, terrain channels, per-map channels and 8 batched inferences of 25 tilts (200 maps), and the objectives at every power; 27 timings each (3 seeds x 9 terrains, 1.5 km objective), after one untimed warm-up. Ray tracer: terrain generation, measurement surface, one scene per azimuth and 104 solves, through the Windows runner, after one untimed solve; the objectives take milliseconds and are not in it. The CPU ray tracer was not run for this: its figure is estimated as the evaluation's measured CPU medians (`results/evaluation_test.md`), 35.415 s for a new terrain's first map plus 103 x 35.333 s.
+Seconds per terrain for the whole search (8 azimuths). Surrogate: terrain generation, terrain channels, per-map channels and 8 batched inferences of 25 tilts (200 maps), and the objectives at every power; 27 timings each (3 seeds x 9 terrains, 1.5 km objective), after one untimed warm-up. Ray tracer: terrain generation, measurement surface, one scene per azimuth and 104 solves, through the Windows runner, after one untimed solve; the objectives take milliseconds and are not in it. The CPU ray tracer was not run for this: its figure is estimated as the evaluation's measured CPU medians (`results/evaluation_test.md`), 34.699 s for a new terrain's first map plus 103 x 34.570 s.
 
 | method | hardware | median | min | max |
 |---|---|---|---|---|
 | surrogate | GPU (NVIDIA GeForce RTX 4060 Laptop GPU, driver 616.56) | 2.24 | 2.04 | 2.39 |
 | surrogate | CPU | 9.38 | 8.76 | 10.13 |
 | ray tracer | GPU (NVIDIA GeForce RTX 4060 Laptop GPU, driver 616.56) | 103.2 | 92.3 | 124.1 |
-| ray tracer | CPU (llvm), estimated | 3675 | | |
+| ray tracer | CPU (llvm), estimated | 3595 | | |
 
-Per terrain, the ray tracer's search takes 46 times as long as the surrogate's on the GPU; without a GPU, an estimated 392 times.
+Per terrain, the ray tracer's search takes 46 times as long as the surrogate's on the GPU; without a GPU, an estimated 383 times.
 
 ## Check: search maps against the dataset
 

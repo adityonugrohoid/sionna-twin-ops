@@ -107,16 +107,16 @@ Shortfall from the ray tracer's whole-grid optimum.
 
 ## Wall time per terrain, same machine
 
-Seconds per terrain for the whole search (8 azimuths). Surrogate: terrain generation, terrain channels, per-map channels and 8 batched inferences of 25 tilts (200 maps), and the objectives at every power; 27 timings each (3 seeds x 9 terrains, 1.5 km objective), after one untimed warm-up. Ray tracer: terrain generation, measurement surface, one scene per azimuth and 104 solves, through the Windows runner, after one untimed solve; the objectives take milliseconds and are not in it. The CPU ray tracer was not run for this: its figure is estimated as the evaluation's measured CPU medians (`results/evaluation_test.md`), 35.415 s for a new terrain's first map plus 103 x 35.333 s.
+Seconds per terrain for the whole search (8 azimuths). Surrogate: terrain generation, terrain channels, per-map channels and 8 batched inferences of 25 tilts (200 maps), and the objectives at every power; 27 timings each (3 seeds x 9 terrains, 1.5 km objective), after one untimed warm-up. Ray tracer: terrain generation, measurement surface, one scene per azimuth and 104 solves, through the Windows runner, after one untimed solve; the objectives take milliseconds and are not in it. The CPU ray tracer was not run for this: its figure is estimated as the evaluation's measured CPU medians (`results/evaluation_test.md`), 34.699 s for a new terrain's first map plus 103 x 34.570 s.
 
 | method | hardware | median | min | max |
 |---|---|---|---|---|
 | surrogate | GPU (NVIDIA GeForce RTX 4060 Laptop GPU, driver 616.56) | 2.21 | 1.87 | 2.33 |
 | surrogate | CPU | 9.06 | 8.77 | 9.39 |
 | ray tracer | GPU (NVIDIA GeForce RTX 4060 Laptop GPU, driver 616.56) | 123.7 | 90.0 | 159.4 |
-| ray tracer | CPU (llvm), estimated | 3675 | | |
+| ray tracer | CPU (llvm), estimated | 3595 | | |
 
-Per terrain, the ray tracer's search takes 56 times as long as the surrogate's on the GPU; without a GPU, an estimated 406 times.
+Per terrain, the ray tracer's search takes 56 times as long as the surrogate's on the GPU; without a GPU, an estimated 397 times.
 
 ## Check: search maps against the dataset
 
