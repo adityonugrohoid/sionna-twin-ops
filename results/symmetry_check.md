@@ -6,7 +6,7 @@ The terrain mesh and the measurement surface split every cell along its SW-NE di
 
 | provenance | |
 |---|---|
-| commit | cc4199d2bfd652b6261b1b15d7fb93ccf7da24f7 |
+| commit | caf8c0b6f9d743e6a0219c8078c77aa77336b0d1 |
 | variant | cuda_ad_mono_polarized |
 | platform | Windows-11-10.0.26200-SP0 |
 | python | 3.13.12 |

@@ -4,7 +4,7 @@ Synthetic terrain ids 3, 6, 1, 4, 5, 8 (training terrains, two per site class), 
 
 | provenance | |
 |---|---|
-| commit | 73018e685c42afe8cc4b833bf12ffb00e68ea51a |
+| commit | caf8c0b6f9d743e6a0219c8078c77aa77336b0d1 |
 | variant | cuda_ad_mono_polarized |
 | platform | Windows-11-10.0.26200-SP0 |
 | python | 3.13.12 |
