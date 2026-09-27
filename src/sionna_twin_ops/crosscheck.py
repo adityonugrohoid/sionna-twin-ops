@@ -204,8 +204,9 @@ def symmetry_check_markdown(terrain_id: int, azimuth_deg: float, tilt_deg: float
     """
     from sionna_twin_ops.antenna import tilt_weights
     from sionna_twin_ops.augment import (
-        VARIANTS,
+        ALL_VARIANTS,
         centred_crop,
+        keeps_fold,
         transform_azimuth,
         transform_raster,
         transform_terrain,
@@ -236,20 +237,30 @@ def symmetry_check_markdown(terrain_id: int, azimuth_deg: float, tilt_deg: float
         "azimuth together and is traced afresh; its map is compared with the original map "
         "moved the same way. Written by `twin symmetry-check`.",
         "",
+        "The terrain mesh and the measurement surface split every cell along its SW-NE "
+        "diagonal. Variants that keep that fold (the identity, the half turn and the two "
+        "diagonal mirrors) move the traced surface exactly and should agree within the "
+        "sampling floor. Quarter turns and axis mirrors flip every cell's fold: the vertex "
+        "heights are the same but the surface between them is not, so those maps differ by "
+        "more than the floor. Training augments with the four fold-keeping variants only "
+        "(spec M2b).",
+        "",
         "| provenance | |",
         "|---|---|",
         *(f"| {k} | {v} |" for k, v in provenance().items()),
         "",
-        "| k | mirror | azimuth | LOS median | LOS p95 | LOS max | LOS cells | NLOS median | "
-        "NLOS p95 | NLOS max | NLOS cells | power only in moved original | power only in traced |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "| k | mirror | keeps fold | azimuth | LOS median | LOS p95 | LOS max | LOS cells | "
+        "NLOS median | NLOS p95 | NLOS max | NLOS cells | power only in moved original | "
+        "power only in traced |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
-    for k, mirror in VARIANTS:
+    for k, mirror in ALL_VARIANTS:
         expected = transform_raster(original, k, mirror)
         traced = original if (k, mirror) == (0, False) else trace(k, mirror)
         los = los_mask(map_geometry(transform_terrain(crop, k, mirror), site))
         lines.append(
-            f"| {k} | {mirror} | {transform_azimuth(azimuth_deg, k, mirror):.0f} | "
+            f"| {k} | {mirror} | {keeps_fold(k, mirror)} | "
+            f"{transform_azimuth(azimuth_deg, k, mirror):.0f} | "
             f"{_stats(expected, traced, los)} | {_stats(expected, traced, ~los)} | "
             f"{int(((expected > 0) & (traced == 0)).sum())} | "
             f"{int(((expected == 0) & (traced > 0)).sum())} |"

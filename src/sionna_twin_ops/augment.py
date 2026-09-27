@@ -1,4 +1,5 @@
-"""Exact symmetries of a map: 4 rotations by 90 degrees times 2 mirrors (8 variants).
+"""Symmetries of a map: 4 rotations by 90 degrees times 2 mirrors (8 variants), of which
+the 4 that keep the mesh fold are exact for the ray tracer (spec M2b).
 
 The map is a 128 x 128 grid centred on the site, so its centre is a cell corner and every
 variant maps cells onto cells. Rasters are indexed [row, column] with row 0 at the south
@@ -16,7 +17,28 @@ from numpy.typing import NDArray
 from sionna_twin_ops.site import MAP_SIZE_M, Site
 from sionna_twin_ops.terrain import Terrain, TerrainParams
 
-VARIANTS = tuple((k, mirror) for mirror in (False, True) for k in range(4))
+ALL_VARIANTS = tuple((k, mirror) for mirror in (False, True) for k in range(4))
+# The mesh splits every cell along its SW-NE diagonal (scene.grid_faces). Only the variants
+# that keep that diagonal move the traced surface exactly: the identity, the half turn and
+# the two diagonal mirrors (mirror then 1 or 3 quarter turns). Quarter turns and axis
+# mirrors flip every cell's fold, which changes the traced map (spec M2b); training uses
+# only these four.
+VARIANTS = ((0, False), (2, False), (1, True), (3, True))
+
+
+def keeps_fold(k: int, mirror: bool) -> bool:
+    """Whether a variant maps each cell's SW-NE fold diagonal onto itself.
+
+    Args:
+        k: Clockwise quarter turns.
+        mirror: Mirror east-west first.
+
+    Returns:
+        True for the four exact variants.
+    """
+    return (k, mirror) in VARIANTS
+
+
 SIN_CHANNEL = 2  # features.py: sin of the horizontal angle off boresight
 CROP_HALF_M = 3480.0  # largest half-width on the 40 m grid inside the tile for any site
 
