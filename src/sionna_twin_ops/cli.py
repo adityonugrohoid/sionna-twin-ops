@@ -198,6 +198,50 @@ def viewer_command(args: argparse.Namespace) -> None:
     sys.stdout.write(f"wrote {args.out}: {len(cases)} cases, {size_mb:.2f} MB\n")
 
 
+def search_surrogate_command(args: argparse.Namespace) -> None:
+    """Run `twin search-surrogate`: the surrogate's search on CPU and GPU, and the trace plan.
+
+    Choices come from the CPU pass; the GPU pass is timed, and its choices (near-ties can
+    fall the other way in float32) are kept and traced too.
+
+    Args:
+        args: Parsed arguments of the search-surrogate command.
+
+    Raises:
+        RuntimeError: If PyTorch sees no CUDA device (the GPU pass needs one).
+    """
+    import torch
+
+    from sionna_twin_ops import search
+
+    if not torch.cuda.is_available():
+        raise RuntimeError("twin search-surrogate times the GPU pass; no CUDA device is visible")
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    records = {}
+    for device in ("cpu", "cuda"):
+        records[device] = search.surrogate_search(args.dataset, args.split, args.runs, device)
+        (args.out_dir / f"surrogate_{device}.json").write_text(
+            json.dumps(records[device]), newline="\n"
+        )
+    choices = search.surrogate_choices(records["cpu"])
+    gpu_choices = search.surrogate_choices(records["cuda"])
+    rule_tilt = search.rule_of_thumb_tilt_deg()
+    extra = search.tilts_to_trace([choices, gpu_choices], rule_tilt)
+    plan = {
+        "choices": choices,
+        "gpu_choices": gpu_choices,
+        "gpu_choices_agree": gpu_choices == choices,
+        "hpbw_deg": search.vertical_hpbw_deg(),
+        "rule_tilt_deg": rule_tilt,
+        "extra": extra,
+    }
+    (args.out_dir / "plan.json").write_text(json.dumps(plan, indent=1), newline="\n")
+    sys.stdout.write(
+        f"rule of thumb {rule_tilt:.3f} deg; {sum(len(v) for v in extra.values())} extra "
+        f"maps to trace; GPU choices agree: {plan['gpu_choices_agree']}\n"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="twin", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -341,6 +385,25 @@ def main(argv: list[str] | None = None) -> int:
     view_cmd.add_argument("--split", choices=("validation", "test"), required=True, help="split")
     view_cmd.add_argument("--run", type=Path, required=True, help="training run that predicts")
     view_cmd.add_argument("--out", type=Path, required=True, help="HTML file to write")
+    s_sur = commands.add_parser(
+        "search-surrogate", help="surrogate tilt and power search (CPU and GPU) and trace plan"
+    )
+    s_sur.add_argument("--dataset", type=Path, required=True, help="dataset directory")
+    s_sur.add_argument("--split", choices=("validation", "test"), required=True, help="split")
+    s_sur.add_argument("--runs", type=Path, nargs="+", required=True, help="training runs")
+    s_sur.add_argument(
+        "--out-dir", type=Path, required=True, help="writes surrogate_{cpu,cuda}.json, plan.json"
+    )
+    s_trace = commands.add_parser(
+        "search-trace", help="ray tracer tilt search, timed per terrain, plus the planned tilts"
+    )
+    s_trace.add_argument(
+        "--variant", default=DEFAULT_VARIANT, help=f"Mitsuba variant (default {DEFAULT_VARIANT})"
+    )
+    s_trace.add_argument("--dataset", type=Path, required=True, help="dataset directory")
+    s_trace.add_argument("--split", choices=("validation", "test"), required=True, help="split")
+    s_trace.add_argument("--plan", type=Path, required=True, help="plan.json of search-surrogate")
+    s_trace.add_argument("--out", type=Path, required=True, help="directory for maps and meta")
     args = parser.parse_args(argv)
 
     if args.command == "env":
@@ -460,6 +523,19 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "viewer":
         viewer_command(args)
+        return 0
+    if args.command == "search-surrogate":
+        search_surrogate_command(args)
+        return 0
+    if args.command == "search-trace":
+        from sionna_twin_ops.backend import select_variant
+
+        select_variant(args.variant)
+        from sionna_twin_ops.search import trace_search
+        from sionna_twin_ops.solve import DATASET_SAMPLES
+
+        plan = json.loads(args.plan.read_text())
+        trace_search(args.dataset, args.split, plan["extra"], DATASET_SAMPLES, args.out)
         return 0
     raise AssertionError(f"unhandled command {args.command!r}")
 
