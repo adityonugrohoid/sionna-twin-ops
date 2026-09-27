@@ -219,15 +219,20 @@ def search_surrogate_command(args: argparse.Namespace) -> None:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     records = {}
     for device in ("cpu", "cuda"):
-        records[device] = search.surrogate_search(args.dataset, args.split, args.runs, device)
+        records[device] = search.surrogate_search(
+            args.dataset, args.split, args.runs, device, args.radius_m
+        )
         (args.out_dir / f"surrogate_{device}.json").write_text(
             json.dumps(records[device]), newline="\n"
         )
     choices = search.surrogate_choices(records["cpu"])
     gpu_choices = search.surrogate_choices(records["cuda"])
-    rule_tilt = search.rule_of_thumb_tilt_deg()
+    rule_tilt = search.rule_of_thumb_tilt_deg(args.radius_m)
     extra = search.tilts_to_trace([choices, gpu_choices], rule_tilt)
     plan = {
+        "commit": records["cpu"]["commit"],
+        "split": args.split,
+        "radius_m": args.radius_m,
         "choices": choices,
         "gpu_choices": gpu_choices,
         "gpu_choices_agree": gpu_choices == choices,
@@ -245,42 +250,55 @@ def search_surrogate_command(args: argparse.Namespace) -> None:
 def search_report_command(args: argparse.Namespace) -> None:
     """Run `twin search-report`: score every chooser with the ray tracer, write report and figure.
 
+    One section per surrogate directory (one objective each), in the order given; the
+    figure and the surrogate timing come from the last.
+
     Args:
         args: Parsed arguments of the search-report command.
+
+    Raises:
+        ValueError: If a plan is for another split.
     """
     from sionna_twin_ops import search
 
-    plan = json.loads((args.surrogate_dir / "plan.json").read_text())
+    trace_meta = json.loads((args.trace_dirs[0] / search.META).read_text())
+    sections = []
+    for surrogate_dir in args.surrogate_dirs:
+        plan = json.loads((surrogate_dir / "plan.json").read_text())
+        if plan["split"] != args.split:
+            raise ValueError(f"{surrogate_dir} holds a {plan['split']} plan, not {args.split}")
+        sections.append((search.score(args.trace_dirs, plan), plan))
+    last = args.surrogate_dirs[-1]
     surrogate = {
-        device: json.loads((args.surrogate_dir / f"surrogate_{device}.json").read_text())
+        device: json.loads((last / f"surrogate_{device}.json").read_text())
         for device in ("cpu", "cuda")
     }
-    trace_meta = json.loads((args.trace_dir / search.META).read_text())
-    scores = search.score(args.trace_dir, plan)
     classes = {t: site["site_class"] for t, site in trace_meta["sites"].items()}
     report = search.report_markdown(
-        scores,
-        plan,
+        args.split,
+        sections,
         surrogate,
         trace_meta,
-        search.dataset_agreement(args.trace_dir, args.dataset),
+        search.dataset_agreement(args.trace_dirs[0], args.dataset),
         search.cpu_raytracer_seconds(args.evaluation_report),
         classes,
     )
+    scores, plan = sections[-1]
     settings, origin = trace_meta["settings"], trace_meta["provenance"]
     caption = (
-        f"Synthetic terrain, test split, {len(scores.optimum)} cases. Ray tracer: Sionna RT "
-        f"{origin['sionna-rt']}, {settings['variant']}, {settings['samples_per_tx']:.0e} rays, "
-        "LOS and specular reflection only; pattern: 3GPP TR 38.901. Objective: covered cells "
-        f"within {search.RADIUS_M / 1000:.0f} km minus covered cells beyond (both ASSUMPTION); "
-        f"covered at RSRP >= {search.RSRP_THRESHOLD_DBM:.0f} dBm. Share = ray-traced objective "
-        "of the chosen setting over the ray tracer's optimum (tilt in 1 deg, power in 1 dB). "
-        f"Rule of thumb: {plan['rule_tilt_deg']:.2f} deg at {search.RULE_POWER_DBM:.0f} dBm. "
-        f"Surrogate: {', '.join(surrogate['cpu']['runs'])}. Dashed: 99%."
+        f"Synthetic terrain, {args.split} split, {len(scores.optimum)} cases. Ray tracer: Sionna "
+        f"RT {origin['sionna-rt']}, {settings['variant']}, {settings['samples_per_tx']:.0e} "
+        "rays, LOS and specular reflection only; pattern: 3GPP TR 38.901. Objective: covered "
+        f"cells within {plan['radius_m'] / 1000:g} km minus covered cells beyond, within the map "
+        f"(both ASSUMPTION); covered at RSRP >= {search.RSRP_THRESHOLD_DBM:.0f} dBm. Share = "
+        "ray-traced objective of the chosen setting over the ray tracer's optimum (tilt in 1 "
+        f"deg, power in 1 dB). Rule of thumb: {plan['rule_tilt_deg']:.2f} deg at "
+        f"{search.RULE_POWER_DBM:.0f} dBm. Surrogate: {', '.join(surrogate['cpu']['runs'])}. "
+        "Dashed: 99%."
     )
     (args.out_dir / "figures").mkdir(parents=True, exist_ok=True)
-    (args.out_dir / "search_test.md").write_text(report, newline="\n")
-    search.search_figure(scores, caption, args.out_dir / "figures" / "search_test.jpg")
+    (args.out_dir / f"search_{args.split}.md").write_text(report, newline="\n")
+    search.search_figure(scores, caption, args.out_dir / "figures" / f"search_{args.split}.jpg")
     sys.stdout.write(report)
 
 
@@ -434,6 +452,9 @@ def main(argv: list[str] | None = None) -> int:
     s_sur.add_argument("--split", choices=("validation", "test"), required=True, help="split")
     s_sur.add_argument("--runs", type=Path, nargs="+", required=True, help="training runs")
     s_sur.add_argument(
+        "--radius-m", type=float, required=True, help="service radius of the objective, in m"
+    )
+    s_sur.add_argument(
         "--out-dir", type=Path, required=True, help="writes surrogate_{cpu,cuda}.json, plan.json"
     )
     s_trace = commands.add_parser(
@@ -445,13 +466,29 @@ def main(argv: list[str] | None = None) -> int:
     s_trace.add_argument("--dataset", type=Path, required=True, help="dataset directory")
     s_trace.add_argument("--split", choices=("validation", "test"), required=True, help="split")
     s_trace.add_argument("--plan", type=Path, required=True, help="plan.json of search-surrogate")
+    s_trace.add_argument(
+        "--extra-only",
+        action="store_true",
+        help="trace only the plan's extra tilts (the grid is already traced), untimed",
+    )
     s_trace.add_argument("--out", type=Path, required=True, help="directory for maps and meta")
     s_rep = commands.add_parser("search-report", help="score the search choices, write the report")
     s_rep.add_argument("--dataset", type=Path, required=True, help="dataset directory")
+    s_rep.add_argument("--split", choices=("validation", "test"), required=True, help="split")
     s_rep.add_argument(
-        "--surrogate-dir", type=Path, required=True, help="output of search-surrogate"
+        "--surrogate-dirs",
+        type=Path,
+        nargs="+",
+        required=True,
+        help="outputs of search-surrogate, one per objective, in report order",
     )
-    s_rep.add_argument("--trace-dir", type=Path, required=True, help="output of search-trace")
+    s_rep.add_argument(
+        "--trace-dirs",
+        type=Path,
+        nargs="+",
+        required=True,
+        help="outputs of search-trace, the timed grid first",
+    )
     s_rep.add_argument(
         "--evaluation-report",
         type=Path,
@@ -459,7 +496,7 @@ def main(argv: list[str] | None = None) -> int:
         help="results/evaluation_test.md (CPU ray tracer medians for the estimate)",
     )
     s_rep.add_argument(
-        "--out-dir", type=Path, required=True, help="writes search_test.md and figures/"
+        "--out-dir", type=Path, required=True, help="writes search_<split>.md and figures/"
     )
     args = parser.parse_args(argv)
 
@@ -592,7 +629,9 @@ def main(argv: list[str] | None = None) -> int:
         from sionna_twin_ops.solve import DATASET_SAMPLES
 
         plan = json.loads(args.plan.read_text())
-        trace_search(args.dataset, args.split, plan["extra"], DATASET_SAMPLES, args.out)
+        trace_search(
+            args.dataset, args.split, plan["extra"], DATASET_SAMPLES, not args.extra_only, args.out
+        )
         return 0
     if args.command == "search-report":
         search_report_command(args)

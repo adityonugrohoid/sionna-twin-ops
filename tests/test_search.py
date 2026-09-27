@@ -36,7 +36,15 @@ def test_hpbw_is_near_the_uniform_array_estimate_and_sets_the_rule() -> None:
     # Uniform 8-element column at 0.8 wavelength: about 0.886 / (8 * 0.8) rad = 7.9 deg.
     hpbw = vertical_hpbw_deg()
     assert 7.0 < hpbw < 9.0
-    assert rule_of_thumb_tilt_deg() == pytest.approx(np.degrees(np.arctan(0.01)) + hpbw / 2)
+    assert rule_of_thumb_tilt_deg(3000.0) == pytest.approx(np.degrees(np.arctan(0.01)) + hpbw / 2)
+    assert rule_of_thumb_tilt_deg(1500.0) == pytest.approx(np.degrees(np.arctan(0.02)) + hpbw / 2)
+
+
+def test_the_first_radius_is_beyond_the_map_and_the_revised_one_inside() -> None:
+    from sionna_twin_ops.search import FIRST_RADIUS_M, RADIUS_M, radius_beyond_map
+
+    assert radius_beyond_map(FIRST_RADIUS_M)  # 3 km against a 2.56 km half-width
+    assert not radius_beyond_map(RADIUS_M)
 
 
 def test_objective_counts_near_cover_minus_spill() -> None:
@@ -99,10 +107,15 @@ def test_share_row_counts_cases_within_one_percent() -> None:
 def test_terrain_objectives_read_every_search_map(tmp_path: Path) -> None:
     from sionna_twin_ops.search import search_map_name, terrain_objectives
 
-    (tmp_path / "maps").mkdir()
+    first, second = tmp_path / "grid", tmp_path / "extra"
+    for d in (first, second):
+        (d / "maps").mkdir(parents=True)
     gain = np.full((2, 2), 1e-9)
     for tilt in (4.5, 4.5346):
-        np.save(tmp_path / "maps" / search_map_name(52, 90.0, tilt), gain.astype(np.float32))
-    values = terrain_objectives(tmp_path, 52, np.array([[True, True], [False, False]]))
-    assert set(values) == {(90.0, 4.5), (90.0, 4.5346)}
-    assert values[(90.0, 4.5)][-1] == 2 - 2  # -90 dB is covered everywhere
+        np.save(first / "maps" / search_map_name(52, 90.0, tilt), gain.astype(np.float32))
+    np.save(second / "maps" / search_map_name(52, 90.0, 4.5), np.zeros((2, 2), np.float32))
+    np.save(second / "maps" / search_map_name(52, 90.0, 2.5), gain.astype(np.float32))
+    near = np.array([[True, True], [False, False]])
+    values = terrain_objectives([first, second], 52, near)
+    assert set(values) == {(90.0, 4.5), (90.0, 4.5346), (90.0, 2.5)}
+    assert values[(90.0, 4.5)][-1] == 2 - 2  # the first directory's map: covered everywhere
