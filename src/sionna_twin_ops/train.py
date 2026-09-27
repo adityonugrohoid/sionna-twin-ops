@@ -9,6 +9,7 @@ loaded; the best epoch is chosen on validation. Synthetic terrain.
 import hashlib
 import json
 import platform
+import resource
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,12 +53,14 @@ class SplitData:
     files: tuple[str, ...]
 
 
-def load_split(dataset: Path, split: str) -> SplitData:
+def load_split(dataset: Path, split: str, storage: type[np.floating[Any]]) -> SplitData:
     """Build the tensors of one split from a dataset directory.
 
     Args:
         dataset: Dataset directory (manifest.jsonl and maps/).
         split: "train", "validation" or "test".
+        storage: Array dtype the split is held in (np.float16 or np.float32); batches are
+            cast to float32 before use.
 
     Returns:
         The split.
@@ -73,9 +76,9 @@ def load_split(dataset: Path, split: str) -> SplitData:
         raise ValueError(f"no {split} maps in {dataset}")
     # Preallocated: stacking lists would briefly hold every map twice.
     n = len(lines)
-    inputs = np.empty((n, INPUT_CHANNELS, 128, 128), dtype=np.float32)
-    residuals = np.empty((n, 128, 128), dtype=np.float32)
-    powers = np.empty((n, 128, 128), dtype=np.float32)
+    inputs = np.empty((n, INPUT_CHANNELS, 128, 128), dtype=storage)
+    residuals = np.empty((n, 128, 128), dtype=storage)
+    powers = np.empty((n, 128, 128), dtype=storage)
     cache: dict[int, Any] = {}
     for index, line in enumerate(lines):
         terrain_id = line["terrain_id"]
@@ -128,9 +131,9 @@ def evaluate(model: nn.Module, data: SplitData, device: torch.device) -> dict[st
     direct_sum = direct_cells = reflected_sum = reflected_cells = 0.0
     with torch.no_grad():
         for start in range(0, len(data.files), BATCH_SIZE):
-            x = data.inputs[start : start + BATCH_SIZE].to(device)
-            r = data.residual[start : start + BATCH_SIZE].to(device)
-            p = data.power[start : start + BATCH_SIZE].to(device)
+            x = data.inputs[start : start + BATCH_SIZE].to(device).float()
+            r = data.residual[start : start + BATCH_SIZE].to(device).float()
+            p = data.power[start : start + BATCH_SIZE].to(device).float()
             out = model(x)
             error = torch.abs(out[:, 0] * RESIDUAL_SCALE_DB - r) * p
             l1_sum += float(error.sum())
@@ -254,9 +257,14 @@ def train(
     torch.backends.cudnn.benchmark = False
 
     started = time.perf_counter()
-    train_data = load_split(dataset, "train")
-    val_data = load_split(dataset, "validation")
+    # The training split is held in float16 to fit WSL's memory; validation stays float32,
+    # so every reported number comes from float32 inputs and targets.
+    train_data = load_split(dataset, "train", np.float16)
+    val_data = load_split(dataset, "validation", np.float32)
     loaded = time.perf_counter() - started
+    peak_rss_mib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0  # Linux: KiB
+    load_record = {"loaded_s": round(loaded, 1), "peak_rss_mib": round(peak_rss_mib)}
+    print(json.dumps(load_record), flush=True)
 
     model = UNet(width).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
@@ -273,9 +281,9 @@ def train(
         train_sum = 0.0
         for start in range(0, len(permutation), BATCH_SIZE):
             idx = permutation[start : start + BATCH_SIZE]
-            x = train_data.inputs[idx].to(device)
-            r = train_data.residual[idx].to(device)
-            p = train_data.power[idx].to(device)
+            x = train_data.inputs[idx].to(device).float()
+            r = train_data.residual[idx].to(device).float()
+            p = train_data.power[idx].to(device).float()
             if augmentation == "symmetry":
                 x, r, p = augment_batch(x, r, p, variants)
             _, _, total = losses(model(x), r, p)
@@ -318,6 +326,8 @@ def train(
             "cudnn_deterministic": True,
         },
         "maps": {"train": len(train_data.files), "validation": len(val_data.files)},
+        "storage": {"train": "float16", "validation": "float32"},
+        "peak_rss_mib_after_load": round(peak_rss_mib),
         "best": best,
         "history": history,
         "seconds": {"load": round(loaded, 1), "total": round(time.perf_counter() - started, 1)},

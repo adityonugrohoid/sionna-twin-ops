@@ -87,3 +87,28 @@ def test_training_writes_weights_and_a_record(tmp_path: Path) -> None:
     assert record["hyperparameters"]["augmentation"] == "symmetry"
     assert "l1_nlos_db" in record["best"]
     assert "l1_los_direct_db" in record["best"]
+    assert record["storage"] == {"train": "float16", "validation": "float32"}
+    assert record["peak_rss_mib_after_load"] > 0
+
+
+@pytest.mark.sionna
+def test_float16_storage_keeps_a_real_target_within_0_05_db() -> None:
+    from sionna_twin_ops.antenna import tilt_weights
+    from sionna_twin_ops.scene import DATASET_FOLD, build_scene, measurement_surface
+    from sionna_twin_ops.solve import solve_map, specular_settings
+
+    entry = select_terrains(20).terrains[0]
+    terrain = generate_terrain(entry.terrain_id, 40.0)
+    x, b0 = map_inputs(terrain_features(terrain, entry.site), 90.0, 6.0)
+    scene = build_scene(terrain, entry.site, 90.0, DATASET_FOLD)
+    surface = measurement_surface(terrain, entry.site, DATASET_FOLD)
+    gain = solve_map(scene, surface, tilt_weights(6.0), specular_settings(10**6, 1)).path_gain
+    residual, power = targets(gain.astype(np.float32), b0)
+    lit = power > 0
+    assert lit.any()
+    round_trip = residual.astype(np.float16).astype(np.float32)
+    assert np.abs(round_trip - residual)[lit].max() < 0.05
+    stored = x.astype(np.float16)
+    assert np.isfinite(stored).all()
+    assert np.abs(stored).max() < np.finfo(np.float16).max
+    assert np.array_equal(power.astype(np.float16).astype(np.float32), power)
