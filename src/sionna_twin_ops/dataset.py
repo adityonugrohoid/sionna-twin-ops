@@ -33,6 +33,7 @@ OFF_GRID_TILTS_DEG = (1.5, 4.5, 7.5)  # spec C3, test terrains only
 OFF_GRID_AZIMUTHS_DEG = (0.0, 180.0)  # ASSUMPTION: spec C3 asks for two, without naming them
 TERRAINS_PER_CLASS = 20  # spec D1: 60 terrains
 SPLIT_PER_CLASS = (("train", 14), ("validation", 3), ("test", 3))  # spec D2: 42 / 9 / 9
+V2_EXTRA_TRAIN_PER_CLASS = 28  # spec D5: +84 training terrains
 SOLVER_SEED = 1  # the ray lattice does not depend on it; recorded all the same
 MANIFEST = "manifest.jsonl"
 
@@ -100,6 +101,62 @@ def select_terrains(per_class: int) -> Selection:
     return Selection(
         terrains=tuple(sorted(entries, key=lambda e: e.terrain_id)), skipped=tuple(skipped)
     )
+
+
+def extend_selection(base: Selection, extra_per_class: int) -> Selection:
+    """Continue the id walk after the base selection's last id, adding training terrains.
+
+    Ids are walked from one past the highest id the base walk reached; each id keeps its
+    own site class, ids with no site candidate are skipped and recorded, and the walk
+    stops when every class has `extra_per_class` new terrains (spec D5). All new terrains
+    go to the training split; validation and test are the base selection's.
+
+    Args:
+        base: The v1 selection.
+        extra_per_class: New training terrains per class.
+
+    Returns:
+        The base terrains plus the new ones, and all skipped ids.
+    """
+    walked = max([e.terrain_id for e in base.terrains] + [i for i, _ in base.skipped])
+    added: dict[SiteClass, list[TerrainEntry]] = {c: [] for c in SITE_CLASSES}
+    skipped = list(base.skipped)
+    terrain_id = walked + 1
+    while any(len(added[c]) < extra_per_class for c in SITE_CLASSES):
+        site_class = site_class_for(terrain_id)
+        if len(added[site_class]) < extra_per_class:
+            try:
+                site = place_site(generate_terrain(terrain_id, GRID_SPACING_M), site_class)
+            except NoSiteError:
+                skipped.append((terrain_id, site_class))
+            else:
+                added[site_class].append(TerrainEntry(terrain_id, "train", site))
+        terrain_id += 1
+    new = [e for c in SITE_CLASSES for e in added[c]]
+    return Selection(
+        terrains=tuple(sorted(base.terrains + tuple(new), key=lambda e: e.terrain_id)),
+        skipped=tuple(skipped),
+    )
+
+
+def selection_for(version: str) -> Selection:
+    """The terrains of a dataset version.
+
+    Args:
+        version: "v1" (spec D1, D2) or "v2" (v1 plus spec D5).
+
+    Returns:
+        The selection.
+
+    Raises:
+        ValueError: For an unknown version.
+    """
+    v1 = select_terrains(TERRAINS_PER_CLASS)
+    if version == "v1":
+        return v1
+    if version == "v2":
+        return extend_selection(v1, V2_EXTRA_TRAIN_PER_CLASS)
+    raise ValueError(f"unknown dataset version {version!r}")
 
 
 def configurations(split: str) -> list[tuple[float, float, str]]:
@@ -232,11 +289,12 @@ def sweep(
     return traced
 
 
-def summary_markdown(dataset: Path) -> str:
+def summary_markdown(dataset: Path, version: str) -> str:
     """The committed record of a dataset (spec D4): counts, skips, time, no-hit shares.
 
     Args:
         dataset: Dataset directory.
+        version: Dataset version whose selection the manifest should match.
 
     Returns:
         Markdown text.
@@ -245,7 +303,7 @@ def summary_markdown(dataset: Path) -> str:
         ValueError: If the manifest mixes settings or holds maps outside the selection.
     """
     lines_ = read_manifest(dataset)
-    selection = select_terrains(TERRAINS_PER_CLASS)
+    selection = selection_for(version)
     expected = {
         map_name(e.terrain_id, a, t): e
         for e in selection.terrains
@@ -263,7 +321,7 @@ def summary_markdown(dataset: Path) -> str:
     cells = 128 * 128
     splits = [s for s, _ in SPLIT_PER_CLASS]
     out = [
-        "# Dataset summary",
+        f"# Dataset summary ({version})",
         "",
         "Synthetic terrain, not a real place. Propagation: Sionna RT, line of sight and "
         "specular reflection only (no diffraction, no diffuse scattering); pattern: 3GPP TR "
