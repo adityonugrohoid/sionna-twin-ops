@@ -173,6 +173,31 @@ def evaluate_command(args: argparse.Namespace) -> None:
     sys.stdout.write(report)
 
 
+def viewer_command(args: argparse.Namespace) -> None:
+    """Run `twin viewer`: write the 3D viewer page for a split.
+
+    Args:
+        args: Parsed arguments of the viewer command.
+    """
+    from sionna_twin_ops import viewer
+    from sionna_twin_ops.evaluate import ERROR_LIMIT_DB, FIGURE_AZIMUTH_DEG, FIGURE_TILT_DEG
+
+    cases = viewer.viewer_cases(args.dataset, args.split, FIGURE_AZIMUTH_DEG, FIGURE_TILT_DEG)
+    data = viewer.viewer_data(args.dataset, args.split, args.run, cases)
+    caption = (
+        f"Synthetic terrain, {args.split} split; propagation: {'; '.join(data['ray_tracing'])}; "
+        f"LOS and specular reflection only; pattern: 3GPP TR 38.901. Surrogate: {args.run} "
+        f"(seed {data['seed']}). Path-gain views share one scale (-150 to -60 dB); the error "
+        f"is clipped at +-{ERROR_LIMIT_DB:.0f} dB. Grey ground: no traced power "
+        "(ray-traced, error) or no predicted power (predicted). Markers: cells where the power "
+        "head and the ray tracer disagree. Written by `twin viewer`."
+    )
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(viewer.viewer_html(data, caption), newline="\n")
+    size_mb = args.out.stat().st_size / 1e6
+    sys.stdout.write(f"wrote {args.out}: {len(cases)} cases, {size_mb:.2f} MB\n")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="twin", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -311,6 +336,11 @@ def main(argv: list[str] | None = None) -> int:
     rt_time.add_argument("--terrains", type=int, required=True, help="new terrains to time")
     rt_time.add_argument("--further-maps", type=int, required=True, help="further maps each")
     rt_time.add_argument("--out", type=Path, required=True, help="JSON file to write")
+    view_cmd = commands.add_parser("viewer", help="write the 3D viewer page (one HTML file)")
+    view_cmd.add_argument("--dataset", type=Path, required=True, help="dataset directory")
+    view_cmd.add_argument("--split", choices=("validation", "test"), required=True, help="split")
+    view_cmd.add_argument("--run", type=Path, required=True, help="training run that predicts")
+    view_cmd.add_argument("--out", type=Path, required=True, help="HTML file to write")
     args = parser.parse_args(argv)
 
     if args.command == "env":
@@ -427,6 +457,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "evaluate":
         evaluate_command(args)
+        return 0
+    if args.command == "viewer":
+        viewer_command(args)
         return 0
     raise AssertionError(f"unhandled command {args.command!r}")
 
