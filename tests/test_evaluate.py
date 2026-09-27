@@ -75,3 +75,26 @@ def test_a_report_without_the_rows_is_refused(tmp_path: Path) -> None:
     report.write_text("| commit | abcdef1234 |\n")
     with pytest.raises(ValueError, match="lacks the rows"):
         quoted_uncertainty(report)
+
+
+def test_backend_agreement_is_read_from_the_committed_check() -> None:
+    from sionna_twin_ops.evaluate import backend_agreement
+
+    median, p95 = backend_agreement(REPO / "results" / "backend_check.md")
+    assert 0.0 <= median <= p95 < 0.1
+
+
+def test_reflection_note_follows_the_numbers() -> None:
+    from sionna_twin_ops.evaluate import Uncertainty, reflection_note
+
+    tally = Tally()
+    tally.errors[("all", "LOS reflection")] = [np.array([-3.0, -2.0], dtype=np.float32)]
+    tally.errors[("hilltop", "LOS reflection")] = [np.array([2.0, 4.0], dtype=np.float32)]
+    fold = {("hilltop", "LOS reflection"): {"fold": (1.0, 3.0), "sampling": (0.0, 0.1)}}
+    note = reflection_note({"seed 0": tally}, ["seed 0"], Uncertainty("abc1234", fold))
+    assert "underpredicts (bias -2.5 dB)" in note
+    assert "(3.00 dB) is above the fold term's median (1.00 dB)" in note
+    tally.errors[("all", "LOS reflection")] = [np.array([3.0], dtype=np.float32)]
+    fold[("hilltop", "LOS reflection")]["fold"] = (5.0, 9.0)
+    note = reflection_note({"seed 0": tally}, ["seed 0"], Uncertainty("abc1234", fold))
+    assert "overpredicts" in note and "is not above" in note

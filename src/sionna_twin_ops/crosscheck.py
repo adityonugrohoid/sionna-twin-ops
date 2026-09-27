@@ -7,6 +7,7 @@ mask. Synthetic terrain.
 """
 
 import json
+import statistics
 import time
 from pathlib import Path
 from typing import Any
@@ -451,3 +452,68 @@ def fold_check_markdown(azimuth_deg: float, tilt_deg: float) -> str:
             f"{reflected / lit * 100:.1f}% |"
         )
     return "\n".join(lines) + "\n"
+
+
+def raytracer_timing(dataset: Path, split: str, terrains: int, further_maps: int) -> dict[str, Any]:
+    """Ray tracer seconds per map, end to end on a new terrain and per further map (spec E5).
+
+    Must run after `backend.select_variant`. One untimed solve on another terrain first
+    compiles the kernels (the surrogate's timing skips its warm-up the same way). Then, for
+    each of the first `terrains` terrains of the split: terrain generation, scene and mesh
+    build, measurement surface and the first solve are timed together; `further_maps` more
+    maps of that terrain are timed as solves only (the scene is kept, as a sweep would).
+
+    Args:
+        dataset: Dataset directory (its manifest names the maps and settings).
+        split: Split whose terrains are used.
+        terrains: New terrains timed end to end.
+        further_maps: Further maps timed per terrain.
+
+    Returns:
+        Medians, the samples behind them, the variant and the GPU record.
+    """
+    from sionna_twin_ops.antenna import tilt_weights
+    from sionna_twin_ops.dataset import read_manifest
+    from sionna_twin_ops.provenance import provenance
+    from sionna_twin_ops.scene import DATASET_FOLD, build_scene, measurement_surface
+    from sionna_twin_ops.site import Site
+    from sionna_twin_ops.solve import solve_map, specular_settings
+
+    lines = sorted(
+        (line for line in read_manifest(dataset) if line["split"] == split),
+        key=lambda line: line["file"],
+    )
+    by_terrain: dict[int, list[dict[str, Any]]] = {}
+    for line in lines:
+        by_terrain.setdefault(line["terrain_id"], []).append(line)
+    ids = sorted(by_terrain)
+    settings = specular_settings(lines[0]["settings"]["samples_per_tx"], 1)
+
+    def first_map(line: dict[str, Any]) -> tuple[Any, Any, Any, float]:
+        start = time.perf_counter()
+        terrain = generate_terrain(line["terrain_id"], GRID_SPACING_M)
+        site = Site(**line["site"])
+        scene = build_scene(terrain, site, line["azimuth_deg"], DATASET_FOLD)
+        surface = measurement_surface(terrain, site, DATASET_FOLD)
+        solve_map(scene, surface, tilt_weights(line["tilt_deg"]), settings)
+        return scene, surface, site, time.perf_counter() - start
+
+    first_map(by_terrain[ids[-1]][0])  # warm-up: kernel compilation, not timed
+    new_terrain, further = [], []
+    for terrain_id in ids[:terrains]:
+        azimuth = by_terrain[terrain_id][0]["azimuth_deg"]
+        maps = [m for m in by_terrain[terrain_id] if m["azimuth_deg"] == azimuth]
+        scene, surface, _, seconds = first_map(maps[0])
+        new_terrain.append(seconds)
+        for line in maps[1 : 1 + further_maps]:
+            result = solve_map(scene, surface, tilt_weights(line["tilt_deg"]), settings)
+            further.append(result.seconds)
+    return {
+        "provenance": provenance(),
+        "samples_per_tx": settings.samples_per_tx,
+        "terrains": ids[:terrains],
+        "new_terrain_first_map_s": new_terrain,
+        "further_map_s": further,
+        "new_terrain_first_map_median_s": statistics.median(new_terrain),
+        "further_map_median_s": statistics.median(further),
+    }

@@ -290,64 +290,67 @@ class Timing:
     """Seconds per map (spec E5), medians.
 
     Attributes:
-        raytracer_gpu: From the dataset manifest (the maps' own solves).
-        raytracer_cpu: Measured here on llvm at the same ray count.
-        raytracer_cpu_maps: Maps behind raytracer_cpu.
+        rt_gpu_new: Ray tracer on the GPU, new terrain, first map, end to end.
+        rt_gpu_further: Ray tracer on the GPU, each further map of that terrain.
+        rt_cpu_new: Ray tracer on the CPU (llvm), new terrain, first map, end to end.
+        rt_cpu_further: Ray tracer on the CPU, each further map.
         surrogate_gpu: Batch-1 inference on the GPU.
         surrogate_cpu: Batch-1 inference on the CPU.
         terrain_features: Geometry, LOS mask and height channels for a new terrain.
         map_inputs: B0 and the per-map channels.
-        gpu_description: Recorded GPU.
+        gpu_record: The GPU ray-tracer timing record (terrains, samples, provenance).
+        cpu_record: The CPU ray-tracer timing record.
     """
 
-    raytracer_gpu: float
-    raytracer_cpu: float
-    raytracer_cpu_maps: int
+    rt_gpu_new: float
+    rt_gpu_further: float
+    rt_cpu_new: float
+    rt_cpu_further: float
     surrogate_gpu: float
     surrogate_cpu: float
     terrain_features: float
     map_inputs: float
-    gpu_description: str
+    gpu_record: dict[str, Any]
+    cpu_record: dict[str, Any]
 
 
-def measure_timing(dataset: Path, split: str, run: Path, cpu_trace_maps: int) -> Timing:
+def measure_timing(
+    dataset: Path, split: str, run: Path, gpu_timing: Path, cpu_terrains: int, cpu_further: int
+) -> Timing:
     """Time the ray tracer and the surrogate on the same machine (spec E5).
 
-    The CPU ray-tracer timing imports Sionna RT; the llvm variant must be selected first.
+    The GPU ray-tracer record comes from `twin raytrace-timing` run through the Windows
+    runner; the CPU one is measured here with the same function on llvm, which must be the
+    selected variant.
 
     Args:
         dataset: Dataset directory.
         split: Split whose maps are timed.
         run: One training run (its model is timed).
-        cpu_trace_maps: Maps to trace on the CPU for the llvm timing.
+        gpu_timing: JSON written by `twin raytrace-timing` on the GPU.
+        cpu_terrains: New terrains for the CPU ray-tracer timing.
+        cpu_further: Further maps per terrain for the CPU ray-tracer timing.
 
     Returns:
         The medians.
+
+    Raises:
+        RuntimeError: If the selected variant is not llvm or the GPU record is not cuda.
     """
-    from sionna_twin_ops.antenna import tilt_weights
     from sionna_twin_ops.backend import active_variant
-    from sionna_twin_ops.provenance import gpu
-    from sionna_twin_ops.scene import DATASET_FOLD, build_scene, measurement_surface
-    from sionna_twin_ops.solve import solve_map, specular_settings
+    from sionna_twin_ops.crosscheck import raytracer_timing
+
+    if active_variant() != "llvm_ad_mono_polarized":
+        raise RuntimeError(f"the CPU timing needs llvm, not {active_variant()}")
+    gpu_record = json.loads(gpu_timing.read_text())
+    if not gpu_record["provenance"]["variant"].startswith("cuda"):
+        raise RuntimeError(f"{gpu_timing} is not a GPU timing")
+    cpu_record = raytracer_timing(dataset, split, cpu_terrains, cpu_further)
 
     lines = sorted(
         (line for line in read_manifest(dataset) if line["split"] == split),
         key=lambda line: line["file"],
     )
-    gpu_seconds = statistics.median(line["wall_s"] for line in lines)
-    if active_variant() != "llvm_ad_mono_polarized":
-        raise RuntimeError(f"the CPU timing needs llvm, not {active_variant()}")
-    samples = lines[0]["settings"]["samples_per_tx"]
-    cpu_seconds = []
-    for line in lines[:: max(1, len(lines) // cpu_trace_maps)][:cpu_trace_maps]:
-        terrain = generate_terrain(line["terrain_id"], GRID_SPACING_M)
-        site = Site(**line["site"])
-        scene = build_scene(terrain, site, line["azimuth_deg"], DATASET_FOLD)
-        surface = measurement_surface(terrain, site, DATASET_FOLD)
-        weights = tilt_weights(line["tilt_deg"])
-        result = solve_map(scene, surface, weights, specular_settings(samples, 1))
-        cpu_seconds.append(result.seconds)
-
     terrain_times, input_times = [], []
     for line in lines[:: max(1, len(lines) // 5)][:5]:
         start = time.perf_counter()
@@ -378,14 +381,41 @@ def measure_timing(dataset: Path, split: str, run: Path, cpu_trace_maps: int) ->
         return statistics.median(times)
 
     return Timing(
-        raytracer_gpu=gpu_seconds,
-        raytracer_cpu=statistics.median(cpu_seconds),
-        raytracer_cpu_maps=len(cpu_seconds),
+        rt_gpu_new=gpu_record["new_terrain_first_map_median_s"],
+        rt_gpu_further=gpu_record["further_map_median_s"],
+        rt_cpu_new=cpu_record["new_terrain_first_map_median_s"],
+        rt_cpu_further=cpu_record["further_map_median_s"],
         surrogate_gpu=infer(torch.device("cuda")),
         surrogate_cpu=infer(torch.device("cpu")),
         terrain_features=statistics.median(terrain_times),
         map_inputs=statistics.median(input_times),
-        gpu_description=gpu(),
+        gpu_record=gpu_record,
+        cpu_record=cpu_record,
+    )
+
+
+def reflection_note(tallies: dict[str, Tally], seeds: list[str], uncertainty: Uncertainty) -> str:
+    """One sentence on the LOS reflection-dominated stratum, written from the numbers.
+
+    Args:
+        tallies: Output of `evaluate_split`.
+        seeds: Surrogate method names.
+        uncertainty: Output of `quoted_uncertainty`.
+
+    Returns:
+        The sentence.
+    """
+    bias = np.mean([error_stats(tallies[s].errors[("all", "LOS reflection")])[3] for s in seeds])
+    median = np.mean(
+        [error_stats(tallies[s].errors[("hilltop", "LOS reflection")])[1] for s in seeds]
+    )
+    fold = uncertainty.terms[("hilltop", "LOS reflection")]["fold"][0]
+    direction = "underpredicts" if bias < 0 else "overpredicts"
+    relation = "above" if median > fold else "not above"
+    return (
+        f"In LOS reflection-dominated cells the surrogate {direction} (bias {bias:+.1f} dB), "
+        f"and on hilltops its median error there ({median:.2f} dB) is {relation} the fold "
+        f"term's median ({fold:.2f} dB)."
     )
 
 
@@ -409,6 +439,10 @@ def report_markdown(
         Markdown text.
     """
     seeds = [name for name in tallies if name.startswith("seed")]
+    gpu_new = timing.terrain_features + timing.map_inputs + timing.surrogate_gpu
+    gpu_further = timing.map_inputs + timing.surrogate_gpu
+    cpu_new = timing.terrain_features + timing.map_inputs + timing.surrogate_cpu
+    cpu_further = timing.map_inputs + timing.surrogate_cpu
 
     def e1_block(group: str) -> list[str]:
         rows = [
@@ -472,6 +506,8 @@ def report_markdown(
         "## E1 and E3: path-gain error by stratum, all grid maps",
         "",
         *e1_block("all"),
+        "",
+        reflection_note(tallies, seeds, uncertainty),
         "",
         "## E3: path-gain error by stratum, per site class",
     ]
@@ -554,24 +590,38 @@ def report_markdown(
         "",
         "## E5: time per map, same machine",
         "",
-        f"GPU: {timing.gpu_description}. Medians.",
+        f"GPU: {timing.gpu_record['provenance']['gpu']}. Medians, in seconds. The ray tracer "
+        f"runs the dataset's settings ({timing.gpu_record['samples_per_tx']:.0e} rays): its "
+        "new-terrain figure covers terrain generation, scene and mesh build, measurement "
+        "surface and the first solve; further maps reuse the scene and time the solve only. "
+        "The surrogate's new-terrain figure covers geometry, LOS mask, B0, the per-map channels "
+        "and inference; further maps cover B0, the channels and inference. Both sides skip "
+        f"their warm-up (kernel compilation). GPU ray tracer: terrains "
+        f"{', '.join(str(t) for t in timing.gpu_record['terrains'])} through the Windows runner "
+        f"(commit {timing.gpu_record['provenance']['commit'][:7]}); CPU ray tracer: terrains "
+        f"{', '.join(str(t) for t in timing.cpu_record['terrains'])}, llvm, measured here.",
         "",
-        "| step | seconds |",
-        "|---|---|",
-        f"| ray tracer, GPU (cuda, from the dataset manifest) | {timing.raytracer_gpu:.3f} |",
-        f"| ray tracer, CPU (llvm, same ray count, {timing.raytracer_cpu_maps} maps measured "
-        f"here) | {timing.raytracer_cpu:.2f} |",
-        f"| surrogate inference, batch 1, GPU | {timing.surrogate_gpu:.4f} |",
-        f"| surrogate inference, batch 1, CPU | {timing.surrogate_cpu:.4f} |",
-        f"| surrogate features for a new terrain (geometry, LOS mask) | "
-        f"{timing.terrain_features:.3f} |",
-        f"| surrogate features per map (B0 and the per-map channels) | {timing.map_inputs:.4f} |",
-        f"| surrogate end to end, first map of a new terrain, GPU | "
-        f"{timing.terrain_features + timing.map_inputs + timing.surrogate_gpu:.3f} |",
-        f"| surrogate end to end, each further map of that terrain, GPU | "
-        f"{timing.map_inputs + timing.surrogate_gpu:.4f} |",
+        "| hardware | case | ray tracer | surrogate | ray tracer / surrogate |",
+        "|---|---|---|---|---|",
+        *(
+            f"| {hw} | {case} | {rt:.3f} | {sg:.4f} | {rt / sg:.1f} |"
+            for hw, case, rt, sg in (
+                ("GPU", "new terrain, first map", timing.rt_gpu_new, gpu_new),
+                ("GPU", "each further map", timing.rt_gpu_further, gpu_further),
+                ("CPU", "new terrain, first map", timing.rt_cpu_new, cpu_new),
+                ("CPU", "each further map", timing.rt_cpu_further, cpu_further),
+            )
+        ),
         "",
-        "The end-to-end rows are the honest comparison with the ray tracer's rows.",
+        "Surrogate parts: geometry and LOS mask for a new terrain "
+        f"{timing.terrain_features:.3f}; B0 and channels per map {timing.map_inputs:.4f}; "
+        f"inference, batch 1, GPU {timing.surrogate_gpu:.4f} and CPU {timing.surrogate_cpu:.4f}.",
+        "",
+        "On this machine, per map, the ray tracer takes "
+        f"{timing.rt_gpu_new / gpu_new:.1f} times as long as the surrogate for a new terrain's "
+        f"first map and {timing.rt_gpu_further / gpu_further:.1f} times as long for each "
+        "further map on the GPU; without a GPU the ratios are "
+        f"{timing.rt_cpu_new / cpu_new:.1f} and {timing.rt_cpu_further / cpu_further:.1f}.",
         "",
         "## Per seed, all grid maps",
         "",
@@ -671,3 +721,30 @@ def evaluation_figure(dataset: Path, split: str, run: Path, caption: str, path: 
     fig.text(0.01, -0.01, caption, fontsize=7.5, color="#52514e", ha="left", va="top", wrap=True)
     fig.savefig(path, dpi=100, bbox_inches="tight", pil_kwargs={"quality": 88})
     plt.close(fig)
+
+
+_BACKEND_ROW = re.compile(
+    r"^\| \d+ \| [\d.e+]+ \| ([\d.]+) \| ([\d.]+) \| [\d.]+ \| \d+ \| ([\d.]+) \| ([\d.]+) \|"
+)
+
+
+def backend_agreement(backend_report: Path) -> tuple[float, float]:
+    """Largest median and p95 of |llvm - cuda| over all rows of the committed backend check.
+
+    Args:
+        backend_report: results/backend_check.md.
+
+    Returns:
+        (largest median, largest p95), in dB, over LOS and NLOS cells of every row.
+
+    Raises:
+        ValueError: If the report has no agreement rows.
+    """
+    medians, p95s = [], []
+    for line in backend_report.read_text().splitlines():
+        if m := _BACKEND_ROW.match(line):
+            medians += [float(m.group(1)), float(m.group(3))]
+            p95s += [float(m.group(2)), float(m.group(4))]
+    if not medians:
+        raise ValueError(f"no agreement rows in {backend_report}")
+    return max(medians), max(p95s)
