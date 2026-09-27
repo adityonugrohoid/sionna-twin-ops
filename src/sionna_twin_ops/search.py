@@ -671,10 +671,10 @@ def edge_counts(scores: Scores) -> dict[str, int]:
 
 
 EDGE_READINGS = {
-    "tilt low": "wants uptilt the box does not allow (the ground rises around the site)",
-    "tilt high": "wants more downtilt than the box allows (the ground falls away)",
-    "power high": "wants more power than the sector maximum",
-    "power low": "wants less power than the box's floor",
+    "tilt low": "the optimum would lie at an uptilt, outside the box",
+    "tilt high": "the optimum would lie at more downtilt than the box allows",
+    "power high": "the optimum would use more than the sector maximum",
+    "power low": "the optimum would use less than the box's power floor",
 }
 
 
@@ -778,7 +778,11 @@ def objective_section(
         "",
         "Shortfall = the ray tracer's optimum on the 1 deg grid minus the chosen setting's "
         "ray-traced objective, in objective points; a half-degree choice can beat the grid and "
-        f"go negative. Within 1 point: shortfall at most {WITHIN_POINTS:g}.",
+        f"go negative. Within 1 point: shortfall at most {WITHIN_POINTS:g}. The objective is "
+        "not smooth in tilt (the column's nulls and sidelobes sweep over distant ground, so "
+        "spill beyond the radius can rise and fall within 1 deg), so the 1 deg grid's optimum "
+        "is a reference with that resolution, not the true optimum; the most negative "
+        "shortfalls below measure how far a half-degree setting beat it.",
         "",
         "| chooser | median shortfall | p90 | max | within 1 point |",
         "|---|---|---|---|---|",
@@ -813,7 +817,21 @@ def objective_section(
         return ", ".join(found) if found else "none"
 
     short = {n: beyond(n) for n in surrogate_names}
+    best_name, best_case = min(
+        ((n, k) for n in surrogate_names for k in scores.shortfalls[n]),
+        key=lambda nk: scores.shortfalls[nk[0]][nk[1]],
+    )
+    whole_best_name, whole_best_terrain = min(
+        ((n, t) for n in scores.whole_shortfalls for t in scores.whole_shortfalls[n]),
+        key=lambda nt: scores.whole_shortfalls[nt[0]][nt[1]],
+    )
     lines += [
+        "",
+        f"Most negative surrogate shortfall (a half-degree setting beating the 1 deg grid): "
+        f"{scores.shortfalls[best_name][best_case]:.4f} per case ({best_name}, terrain "
+        f"{best_case.split('/')[0]}, azimuth {best_case.split('/')[1]} deg) and "
+        f"{scores.whole_shortfalls[whole_best_name][whole_best_terrain]:.4f} over a whole "
+        f"terrain ({whole_best_name}, terrain {whole_best_terrain}).",
         "",
         f"Largest surrogate shortfall: {scores.shortfalls[worst_name][worst_case]:.4f} "
         f"({worst_name}, terrain {worst_case.split('/')[0]}, azimuth "
