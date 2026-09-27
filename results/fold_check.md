@@ -4,7 +4,7 @@ Synthetic terrain ids 3, 6, 1, 4, 5, 8 (training terrains, two per site class), 
 
 | provenance | |
 |---|---|
-| commit | 7d8ea096daa306b7e6edcc8b475a512a0b5c164d |
+| commit | ee693dabdc173bfba648f155d977fb1e69b443a1 |
 | variant | cuda_ad_mono_polarized |
 | platform | Windows-11-10.0.26200-SP0 |
 | python | 3.13.12 |
@@ -45,3 +45,14 @@ Distance is Euclidean, in cells (40 m), from a LOS cell to the nearest non-LOS c
 | all | 1 to 2 | 0.670 | 4.970 | 34.697 | 10145 |
 | all | 2 to 4 | 0.490 | 5.024 | 37.549 | 11111 |
 | all | 4 or more | 0.541 | 3.843 | 29.431 | 12401 |
+
+## Fold term by dominant path
+
+A cell with power in the SW-NE map is reflection-dominated when its traced gain exceeds B0 (direct path and antenna pattern, no terrain) by 3 dB or more (ASSUMPTION), and direct-dominated otherwise. Median / p95 of the fold term, and the cells compared.
+
+| site class | LOS direct | LOS reflection | NLOS direct | NLOS reflection | LOS cells reflection-dominated |
+|---|---|---|---|---|---|
+| hilltop | 0.446 / 2.792 (15685) | 1.030 / 3.224 (2066) | 1.444 / 8.849 (1456) | - / - (0) | 11.6% |
+| slope | 0.427 / 2.735 (4081) | 1.399 / 5.051 (183) | 1.928 / 9.063 (1190) | 1.764 / 9.528 (7) | 4.3% |
+| valley | 0.591 / 4.821 (9644) | 4.083 / 18.456 (1998) | 1.800 / 10.403 (2454) | 8.523 / 21.462 (36) | 17.1% |
+| all | 0.484 / 3.287 (29410) | 1.715 / 13.241 (4247) | 1.718 / 9.685 (5100) | 7.091 / 20.011 (43) | 12.6% |
