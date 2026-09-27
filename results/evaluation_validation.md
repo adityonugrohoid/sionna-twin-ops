@@ -31,6 +31,8 @@ The ray tracer's own uncertainty is quoted from `results/fold_check.md` (commit 
 | NLOS | ray tracer, fold term (quoted) | | 1.725 | 9.905 | | |
 | NLOS | ray tracer, sampling floor (quoted) | | 0.019 | 0.667 | | |
 
+In LOS reflection-dominated cells the surrogate underpredicts (bias -2.7 dB), and on hilltops its median error there (2.76 dB) is above the fold term's median (1.03 dB).
+
 ## E3: path-gain error by stratum, per site class
 
 ### hilltop
@@ -129,20 +131,18 @@ Not in this split: off-grid tilts (1.5, 4.5, 7.5 deg) exist on test only.
 
 ## E5: time per map, same machine
 
-GPU: NVIDIA GeForce RTX 4060 Laptop GPU, driver 616.56. Medians.
+GPU: NVIDIA GeForce RTX 4060 Laptop GPU, driver 616.56. Medians, in seconds. The ray tracer runs the dataset's settings (1e+09 rays): its new-terrain figure covers terrain generation, scene and mesh build, measurement surface and the first solve; further maps reuse the scene and time the solve only. The surrogate's new-terrain figure covers geometry, LOS mask, B0, the per-map channels and inference; further maps cover B0, the channels and inference. Both sides skip their warm-up (kernel compilation). GPU ray tracer: terrains 43, 46, 49 through the Windows runner (commit 2d4b5af); CPU ray tracer: terrains 43, 46, 49, llvm, measured here.
 
-| step | seconds |
-|---|---|
-| ray tracer, GPU (cuda, from the dataset manifest) | 1.214 |
-| ray tracer, CPU (llvm, same ray count, 3 maps measured here) | 33.77 |
-| surrogate inference, batch 1, GPU | 0.0035 |
-| surrogate inference, batch 1, CPU | 0.0292 |
-| surrogate features for a new terrain (geometry, LOS mask) | 0.351 |
-| surrogate features per map (B0 and the per-map channels) | 0.0047 |
-| surrogate end to end, first map of a new terrain, GPU | 0.360 |
-| surrogate end to end, each further map of that terrain, GPU | 0.0082 |
+| hardware | case | ray tracer | surrogate | ray tracer / surrogate |
+|---|---|---|---|---|
+| GPU | new terrain, first map | 1.340 | 0.3877 | 3.5 |
+| GPU | each further map | 1.325 | 0.0078 | 169.1 |
+| CPU | new terrain, first map | 41.268 | 0.4131 | 99.9 |
+| CPU | each further map | 40.949 | 0.0332 | 1233.9 |
 
-The end-to-end rows are the honest comparison with the ray tracer's rows.
+Surrogate parts: geometry and LOS mask for a new terrain 0.380; B0 and channels per map 0.0044; inference, batch 1, GPU 0.0034 and CPU 0.0287.
+
+On this machine, per map, the ray tracer takes 3.5 times as long as the surrogate for a new terrain's first map and 169.1 times as long for each further map on the GPU; without a GPU the ratios are 99.9 and 1233.9.
 
 ## Per seed, all grid maps
 
