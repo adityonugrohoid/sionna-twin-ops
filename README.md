@@ -1,13 +1,14 @@
 # sionna-twin-ops
 
-A learned surrogate of a ray tracer for one radio sector on synthetic hilly terrain,
-generated from seeds (no real place, operator or network). NVIDIA Sionna RT computes
-path-gain maps over procedurally generated hills, slopes and valleys; a small U-Net learns
-to predict those maps on terrain it has never seen, and a tilt and power search uses it in
-place of the ray tracer. It is for radio and machine-learning engineers who want to see how
-far such a surrogate can be trusted, and at what cost. What sets it apart is that every
-surrogate number is shown beside two classic propagation baselines and the ray tracer's own
-uncertainty, on held-out terrain.
+A radio digital twin pipeline for one sector on synthetic hilly terrain generated from seeds
+(no real place, operator or network): ray-traced ground truth with its own uncertainty
+measured, a versioned dataset contract, a learned surrogate scored against two propagation
+baselines on held-out terrain, and a tilt and power search that uses it. NVIDIA Sionna RT
+computes path-gain maps over procedurally generated hills, slopes and valleys; a small U-Net
+learns to predict those maps on terrain it has never seen. It is for radio and
+machine-learning engineers who want to see how far such a surrogate can be trusted, and at
+what cost. What sets it apart is that every surrogate number is shown beside two classic
+propagation baselines and the ray tracer's own uncertainty, on held-out terrain.
 
 ## Quickstart
 
@@ -36,6 +37,34 @@ Measured on a 16-thread machine:
 - `twin backend-maps` ray-traces three terrains with Sionna RT on the CPU at 1e7 rays per
   map, in about 5 s. It writes one path-gain map per terrain as `.npy`, and its settings and
   provenance in `meta.json`.
+
+## In plain terms
+
+Before an antenna is installed or re-aimed, engineers want to know where its signal will
+reach. On a computer there are two usual ways to predict that:
+
+- A quick formula, from distance, antenna height and the shape of the antenna's beam. It
+  is instant, but it sees the hills in between only roughly, if at all.
+- A detailed simulation (ray tracing), which follows the radio waves over the terrain: which
+  paths a hill blocks and which bounce off the ground. It is much closer to reality, but
+  slow.
+
+This repo tests a third way. A small AI model studies thousands of detailed simulations,
+the way a student studies a teacher's worked answers, and then predicts new coverage maps
+almost instantly. It is tested on hills it has never seen, against the simulation and two
+quick formulas. On that unseen terrain:
+
+- Its typical error is 1.549 dB, half or less than that of the quick formulas (3.132 and
+  3.844 dB).
+- Asked to choose an antenna's tilt and power, it lands within 1 point of the simulation's
+  best choice (0.01 on a score from -1 to 1) in 68 to 71 of 72 cases. A common tilt rule of
+  thumb aims at the same distance but cannot see the hills; it lands that close in 3.
+- After the first map of a terrain, each further map of that terrain (another antenna
+  direction or tilt) is 133.5 times faster than the simulation on the same GPU.
+
+Everything here is simulated: made-up hills with no buildings or trees, and no field
+measurements. It shows how far such a model can be trusted against a detailed simulation.
+It is not a planning tool and makes no claim about a real network.
 
 ## How it works
 
