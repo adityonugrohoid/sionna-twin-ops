@@ -28,7 +28,7 @@ uv run twin backend-maps --samples 1e7 --seed 1 --out /tmp/sionna-twin-ops-trace
 Measured on a 16-thread machine:
 
 - `uv sync` installs the locked environment: it downloads about 3 GB, most of it PyTorch,
-  and takes about 6 GB on disk. A cold install took 35 to 62 s in CI.
+  and takes about 6 GB on disk. A cold install took 34 to 62 s in CI.
 - `twin summary` rebuilds [results/SUMMARY.md](results/SUMMARY.md) from the committed report
   data in under a second.
 - The nbmake line runs the report notebook end to end in about 3 s. It reads only committed
