@@ -15,7 +15,7 @@ Synthetic terrain. The surrogate is a U-Net predicting the ray-traced path gain 
 | schedule | cosine over all steps |
 | optimizer | AdamW |
 | cudnn_deterministic | True |
-| dataset | /home/adityonugrohoid/projects/sionna-twin-ops/data/dataset-v2 (manifest sha256 fb0f1b247b3b2171...) |
+| dataset | data/dataset-v2 (manifest sha256 fb0f1b247b3b2171...) |
 | maps | train 5040, validation 360 |
 
 | provenance | values seen |

@@ -314,7 +314,7 @@ def train(
             "device": device_name,
             "gpu": gpu(),
         },
-        "dataset": {"path": str(dataset.resolve()), "manifest_sha256": manifest_sha},
+        "dataset": {"path": str(dataset), "manifest_sha256": manifest_sha},
         "hyperparameters": {
             "seed": seed,
             "epochs": epochs,
