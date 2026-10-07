@@ -1,7 +1,7 @@
 """Training the surrogate (spec M1 to M4).
 
 The path-gain head is trained with L1 loss in dB on cells where the ray tracer has power
-(spec M2: "valid" means power above zero; PR 3 set no power threshold), and the power head
+(spec M2: "valid" means power above zero; no power threshold is set), and the power head
 with binary cross-entropy on all cells (spec M1b). Only the train and validation splits are
 loaded; the best epoch is chosen on validation. Synthetic terrain.
 """

@@ -12,7 +12,7 @@ from numpy.typing import NDArray
 
 BASE_SEED = 20260926
 TILE_SIZE_M = 10000.0  # spec T3
-GRID_SPACING_M = 40.0  # START (spec T3); PR 3 tries 20 m
+GRID_SPACING_M = 40.0  # spec T3
 
 # Per-terrain parameter ranges (spec T2). ASSUMPTION: judged by eye on the sample grid.
 RELIEF_RANGE_M = (100.0, 800.0)
