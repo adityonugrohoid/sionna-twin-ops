@@ -17,7 +17,7 @@
     "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU, driver 616.56"
    },
    "dataset": {
-    "path": "/home/adityonugrohoid/projects/sionna-twin-ops/data/dataset-v2",
+    "path": "data/dataset-v2",
     "manifest_sha256": "fb0f1b247b3b2171113caf0b2a2d2e84599dc964e56ce7771d622d6ef1ffb3b6"
    },
    "hyperparameters": {
@@ -620,7 +620,7 @@
     "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU, driver 616.56"
    },
    "dataset": {
-    "path": "/home/adityonugrohoid/projects/sionna-twin-ops/data/dataset-v2",
+    "path": "data/dataset-v2",
     "manifest_sha256": "fb0f1b247b3b2171113caf0b2a2d2e84599dc964e56ce7771d622d6ef1ffb3b6"
    },
    "hyperparameters": {
@@ -1223,7 +1223,7 @@
     "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU, driver 616.56"
    },
    "dataset": {
-    "path": "/home/adityonugrohoid/projects/sionna-twin-ops/data/dataset-v2",
+    "path": "data/dataset-v2",
     "manifest_sha256": "fb0f1b247b3b2171113caf0b2a2d2e84599dc964e56ce7771d622d6ef1ffb3b6"
    },
    "hyperparameters": {
@@ -1828,7 +1828,7 @@
     "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU, driver 616.56"
    },
    "dataset": {
-    "path": "/home/adityonugrohoid/projects/sionna-twin-ops/data/dataset-v1",
+    "path": "data/dataset-v1",
     "manifest_sha256": "a8c98681b9a412bd13935467172c71deab4412077f2919f81f33746c2bdfc66a"
    },
    "hyperparameters": {
@@ -2324,7 +2324,7 @@
     "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU, driver 616.56"
    },
    "dataset": {
-    "path": "/home/adityonugrohoid/projects/sionna-twin-ops/data/dataset-v1",
+    "path": "data/dataset-v1",
     "manifest_sha256": "a8c98681b9a412bd13935467172c71deab4412077f2919f81f33746c2bdfc66a"
    },
    "hyperparameters": {
@@ -2820,7 +2820,7 @@
     "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU, driver 616.56"
    },
    "dataset": {
-    "path": "/home/adityonugrohoid/projects/sionna-twin-ops/data/dataset-v1",
+    "path": "data/dataset-v1",
     "manifest_sha256": "a8c98681b9a412bd13935467172c71deab4412077f2919f81f33746c2bdfc66a"
    },
    "hyperparameters": {
