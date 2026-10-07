@@ -4,7 +4,7 @@ A learned surrogate of a ray tracer on hilly terrain: Sionna RT computes
 path-gain maps for one sector over procedurally generated terrain, and a
 small neural network learns to predict them on terrain it has never seen.
 `README.md` is the human overview; `docs/dataset.md` holds the dataset and
-measurement rules once written.
+measurement rules.
 
 ## Rules for this repo
 
