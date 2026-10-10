@@ -10,6 +10,13 @@ machine-learning engineers who want to see how far such a surrogate can be trust
 what cost. What sets it apart is that every surrogate number is shown beside two classic
 propagation baselines and the ray tracer's own uncertainty, on held-out terrain.
 
+![Synthetic terrain 52, a slope site on the test split, with the ray-traced path gain draped over the ground at 2x vertical exaggeration; the mast in red, the boresight in yellow, grey where the ray tracer finds no power](results/figures/viewer_case52.jpg)
+
+One case of the committed 3D viewer: synthetic terrain, the ray-traced path gain on the
+ground, azimuth 90 deg and tilt 6 deg, 2x vertical exaggeration. Open
+[results/viewer_test.html](results/viewer_test.html) in a browser for the interactive page
+with the ray-traced, predicted and error views of every test case.
+
 ## Quickstart
 
 Needs [uv](https://docs.astral.sh/uv/) and Linux. The ray-tracing step runs on the CPU and
@@ -66,6 +73,10 @@ Everything here is simulated: made-up hills with no buildings or trees, and no f
 measurements. It shows how far such a model can be trusted against a detailed simulation.
 It is not a planning tool and makes no claim about a real network.
 
+![Sixteen synthetic terrain tiles, 10 by 10 km each on a 40 m grid, drawn as hillshades on one shared height scale, each titled with its relief and roughness](results/figures/terrain_samples.jpg)
+
+The made-up hills: sixteen of the terrains, generated from seeds, on one height scale.
+
 ## How it works
 
 1. **Terrain and sites.** Each terrain is a spectral-noise heightmap on a 40 m grid, drawn
@@ -117,6 +128,12 @@ On the held-out test terrain, from [results/SUMMARY.md](results/SUMMARY.md):
   133.5 times as long for each further map of that terrain. A whole search of one terrain
   takes 46 times as long.
 
+![For a hilltop, a slope and a valley test terrain: the ray-traced path gain, the surrogate's prediction, and the difference between them, each on a shared colour scale over the hillshaded ground](results/figures/evaluation_test.jpg)
+
+Hilltop, slope and valley test terrains: the ray tracer's path gain, the surrogate's
+prediction, and their difference, on one shared scale
+([results/evaluation_test.md](results/evaluation_test.md)).
+
 ## Limitations
 
 - Synthetic terrain only: one ground material, no vegetation, buildings or clutter, flat
@@ -136,7 +153,9 @@ The full list, with links, is in [results/SUMMARY.md](results/SUMMARY.md).
 
 The dataset, weights and run outputs are not in git. The commands that made them are `twin
 dataset-sweep`, `twin train`, `twin evaluate`, `twin fold-check` and the other `twin`
-subcommands (`uv run twin --help`); each report names the command that wrote it. Ray
+subcommands (`uv run twin --help`); each report names the command that wrote it. `twin
+viewer` writes the interactive page in `results/` and, with `--still`, the figure under the
+opening paragraph. Ray
 tracing at the dataset's 1e9 rays per map ran on native Windows with the GPU, driven from
 WSL by the runner in [docs/windows-gpu.md](docs/windows-gpu.md). The CPU backend agrees
 with it: median and p95 differences print as 0.000 dB, though single cells differ by up to
