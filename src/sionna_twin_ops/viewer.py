@@ -46,6 +46,35 @@ def pack_int16(values: NDArray[np.floating[Any]]) -> str:
     return base64.b64encode(zlib.compress(out.tobytes(), 9)).decode("ascii")
 
 
+def unpack_int16(text: str) -> NDArray[np.float64]:
+    """Inverse of pack_int16: values in dB, NaN where the sentinel says there is no power.
+
+    Args:
+        text: Base64 of the zlib-compressed little-endian int16 tenths of a dB.
+
+    Returns:
+        Flat float array, one value per cell.
+    """
+    raw = np.frombuffer(zlib.decompress(base64.b64decode(text)), dtype="<i2")
+    values = raw.astype(np.float64) / 10.0
+    values[raw == NO_POWER] = np.nan
+    return values
+
+
+def unpack_bits(text: str, count: int) -> NDArray[np.bool_]:
+    """Inverse of pack_bits: the first `count` bits, first cell in the high bit.
+
+    Args:
+        text: Base64 of the zlib-compressed bitmask.
+        count: Number of cells the mask covers.
+
+    Returns:
+        Flat boolean array of length `count`.
+    """
+    raw = np.frombuffer(zlib.decompress(base64.b64decode(text)), dtype=np.uint8)
+    return np.unpackbits(raw)[:count].astype(bool)
+
+
 def pack_bits(mask: NDArray[np.bool_]) -> str:
     """Compressed base64 of a boolean array, 8 cells per byte, first cell in the high bit.
 
