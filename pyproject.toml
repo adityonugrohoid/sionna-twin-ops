@@ -52,5 +52,5 @@ strict = true
 files = ["src", "tests"]
 
 [[tool.mypy.overrides]]
-module = ["sionna.*", "mitsuba.*", "drjit.*", "jupytext.*"]
+module = ["sionna.*", "mitsuba.*", "drjit.*", "jupytext.*", "mpl_toolkits.*"]
 ignore_missing_imports = true

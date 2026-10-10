@@ -1,6 +1,8 @@
-"""Figures for review: sample terrain hillshades and site placement."""
+"""Figures for review: sample terrain hillshades, site placement, and a still of the 3D viewer."""
 
+import textwrap
 from pathlib import Path
+from typing import Any, cast
 
 import matplotlib
 
@@ -9,12 +11,20 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.axes import Axes
-from matplotlib.colors import LightSource, Normalize
+from matplotlib.colors import LightSource, Normalize, to_rgba
 from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
+from mpl_toolkits.mplot3d import Axes3D
 
-from sionna_twin_ops.site import SEARCH_HALF_WIDTH_M, map_bounds, place_site, site_class_for
+from sionna_twin_ops.site import (
+    MAP_CELL_M,
+    SEARCH_HALF_WIDTH_M,
+    map_bounds,
+    place_site,
+    site_class_for,
+)
 from sionna_twin_ops.terrain import BASE_SEED, RELIEF_RANGE_M, Terrain, generate_terrain
+from sionna_twin_ops.viewer import BEAM_LENGTH_M, unpack_int16
 
 matplotlib.rcParams["axes.unicode_minus"] = False  # ASCII hyphen-minus in tick labels
 
@@ -138,6 +148,112 @@ def site_placement(ids: list[int], spacing_m: float, path: Path) -> None:
         fontsize=8,
     )
     fig.savefig(path, dpi=100, pil_kwargs={"quality": 85})
+    plt.close(fig)
+
+
+GAIN_RANGE_DB = (-150.0, -60.0)  # the viewer page's shared path-gain scale
+NO_SIGNAL_GREY = "#8a8a8a"  # the viewer page's ground colour where the ray tracer has no power
+VIEWER_BG = "#111111"
+VIEWER_TEXT = "#dddddd"
+VIEWER_AXIS = "#888888"
+VIEWER_EYE = (-0.95, -1.1, 0.65)  # the page's camera, as Plotly's eye vector
+
+
+def viewer_still(
+    data: dict[str, Any], case_index: int, exaggeration: float, caption: str, path: Path
+) -> None:
+    """One case of the 3D viewer as a still: the ray-traced path gain draped over its terrain.
+
+    Draws from the same packed data the viewer page receives, so the still and the page agree.
+    Cells without traced power are the page's grey; the mast and the boresight are drawn as
+    on the page; the camera matches the page's starting view.
+
+    Args:
+        data: Output of `viewer.viewer_data`.
+        case_index: Index into `data["cases"]`.
+        exaggeration: Vertical exaggeration of the heights, as the page's buttons offer.
+        caption: Text under the figure stating what is shown and its settings.
+        path: Output image file (JPEG).
+
+    Raises:
+        ValueError: If a case's maps are not square or disagree with the terrain's size.
+    """
+    case = data["cases"][case_index]
+    terrain = data["terrains"][str(case["terrain"])]
+    ground = unpack_int16(terrain["ground"])
+    traced = unpack_int16(case["traced"])
+    n = round(float(np.sqrt(ground.size)))
+    if n * n != ground.size or traced.size != ground.size:
+        raise ValueError(f"maps of {ground.size} and {traced.size} cells are not one square grid")
+    axis_km = ((np.arange(n) + 0.5) * MAP_CELL_M - n * MAP_CELL_M / 2) / 1000.0
+    x, y = np.meshgrid(axis_km, axis_km)
+    z = ground.reshape(n, n)
+    gain = traced.reshape(n, n)
+
+    norm = Normalize(vmin=GAIN_RANGE_DB[0], vmax=GAIN_RANGE_DB[1])
+    colours = plt.get_cmap("viridis")(norm(np.nan_to_num(gain, nan=GAIN_RANGE_DB[0])))
+    colours[np.isnan(gain)] = to_rgba(NO_SIGNAL_GREY)
+    light = LightSource(azdeg=315, altdeg=45).hillshade(z, vert_exag=exaggeration, dx=1, dy=1)
+    colours[..., :3] *= (0.55 + 0.45 * light)[..., None]
+
+    fig = plt.figure(figsize=(10.5, 6.4), facecolor=VIEWER_BG)
+    ax = cast(Axes3D, fig.add_subplot(projection="3d"))
+    ax.set_facecolor(VIEWER_BG)
+    ax.computed_zorder = False  # the mast and boresight are drawn after, and over, the ground
+    ax.plot_surface(
+        x,
+        y,
+        z,
+        facecolors=colours,
+        rstride=1,
+        cstride=1,
+        shade=False,
+        linewidth=0,
+        antialiased=False,
+    )
+    ground_m, antenna_m = terrain["site_ground_m"], terrain["antenna_m"]
+    ax.plot([0, 0], [0, 0], [ground_m, antenna_m], color="#ff3030", lw=3)
+    az, tl = np.radians(case["azimuth"]), np.radians(case["tilt"])
+    beam_km = BEAM_LENGTH_M / 1000.0
+    ax.plot(
+        [0, beam_km * np.sin(az) * np.cos(tl)],
+        [0, beam_km * np.cos(az) * np.cos(tl)],
+        [antenna_m, antenna_m - BEAM_LENGTH_M * np.sin(tl)],
+        color="#ffd000",
+        lw=2,
+    )
+    lo, hi = float(z.min()), max(float(z.max()), float(antenna_m))
+    ax.set_zlim(lo - 10, hi + 40)
+    ax.set_box_aspect((1.0, 1.0, exaggeration * (hi - lo + 50) / (n * MAP_CELL_M)), zoom=1.6)
+    ex, ey, ez = VIEWER_EYE
+    ax.view_init(
+        elev=float(np.degrees(np.arctan2(ez, np.hypot(ex, ey)))),
+        azim=float(np.degrees(np.arctan2(ey, ex))),
+    )
+    ax.set_xlabel("east (km)")
+    ax.set_ylabel("north (km)")
+    ax.set_zlabel("height (m)")
+    for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+        axis.set_pane_color(to_rgba(VIEWER_BG))
+        axis.label.set_color(VIEWER_AXIS)
+        axis.line.set_color(VIEWER_AXIS)
+    ax.tick_params(colors=VIEWER_AXIS, labelsize=7)
+    ax.grid(False)
+    bar = fig.colorbar(
+        plt.cm.ScalarMappable(norm=norm, cmap="viridis"), ax=ax, shrink=0.5, pad=0.02
+    )
+    bar.set_label("path gain (dB)", color=VIEWER_TEXT)
+    bar.ax.yaxis.set_tick_params(color=VIEWER_AXIS, labelcolor=VIEWER_TEXT)
+    fig.text(
+        0.01,
+        0.01,
+        "\n".join(textwrap.wrap(caption, 150)),
+        fontsize=7,
+        color=VIEWER_TEXT,
+        va="bottom",
+    )
+    fig.subplots_adjust(left=0.0, right=0.98, bottom=0.12, top=1.0)
+    fig.savefig(path, dpi=110, pil_kwargs={"quality": 85}, facecolor=VIEWER_BG)
     plt.close(fig)
 
 

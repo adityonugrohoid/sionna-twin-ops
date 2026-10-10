@@ -163,8 +163,11 @@ def evaluate_command(args: argparse.Namespace) -> None:
     sys.stdout.write(report)
 
 
+STILL_EXAGGERATION = 2.0  # the viewer page's starting vertical exaggeration
+
+
 def viewer_command(args: argparse.Namespace) -> None:
-    """Run `twin viewer`: write the 3D viewer page for a split.
+    """Run `twin viewer`: write the 3D viewer page for a split, and optionally a still of it.
 
     Args:
         args: Parsed arguments of the viewer command.
@@ -186,6 +189,23 @@ def viewer_command(args: argparse.Namespace) -> None:
     args.out.write_text(viewer.viewer_html(data, caption), newline="\n")
     size_mb = args.out.stat().st_size / 1e6
     sys.stdout.write(f"wrote {args.out}: {len(cases)} cases, {size_mb:.2f} MB\n")
+    if args.still is not None:
+        from sionna_twin_ops.figures import viewer_still
+
+        first = data["cases"][0]
+        site_class = data["terrains"][str(first["terrain"])]["site_class"]
+        still_caption = (
+            f"Synthetic terrain, {args.split} split, terrain {first['terrain']} ({site_class}): "
+            f"ray-traced path gain draped on the ground, {STILL_EXAGGERATION:.0f}x vertical "
+            f"exaggeration; azimuth {first['azimuth']:g} deg, tilt {first['tilt']:g} deg; "
+            f"red mast, yellow boresight {viewer.BEAM_LENGTH_M / 1000:g} km; grey ground: no "
+            "traced power. "
+            f"Propagation: {'; '.join(data['ray_tracing'])}; LOS and specular reflection only; "
+            "pattern: 3GPP TR 38.901. The page's first view, written by `twin viewer --still`."
+        )
+        args.still.parent.mkdir(parents=True, exist_ok=True)
+        viewer_still(data, 0, STILL_EXAGGERATION, still_caption, args.still)
+        sys.stdout.write(f"wrote {args.still}: terrain {first['terrain']}, the page's first case\n")
 
 
 def search_surrogate_command(args: argparse.Namespace) -> None:
@@ -445,6 +465,9 @@ def main(argv: list[str] | None = None) -> int:
     view_cmd.add_argument("--split", choices=("validation", "test"), required=True, help="split")
     view_cmd.add_argument("--run", type=Path, required=True, help="training run that predicts")
     view_cmd.add_argument("--out", type=Path, required=True, help="HTML file to write")
+    view_cmd.add_argument(
+        "--still", type=Path, help="also write the page's first case as a JPEG still"
+    )
     s_sur = commands.add_parser(
         "search-surrogate", help="surrogate tilt and power search (CPU and GPU) and trace plan"
     )
